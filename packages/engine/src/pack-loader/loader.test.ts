@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { createPackLoader } from "./loader.js";
+import { createNodePackFileSystem } from "./node-filesystem.js";
 import type { PackDirectoryEntry, PackFileMetadata, PackFileSystem } from "./types.js";
 
 class MemoryFileSystem implements PackFileSystem {
@@ -154,4 +157,37 @@ test("normalizes malformed document parsing to a safe diagnostic", async () => {
     code: "pack.parse_error",
     message: "A pack document could not be parsed.",
   });
+});
+
+test("reads ordinary inputs through the node filesystem adapter", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lorelum-pack-"));
+  try {
+    await writeFile(join(root, "pack.yaml"), "name: test-pack\nversion: 1.0.0\n");
+
+    const input = await createPackLoader(createNodePackFileSystem()).load(root);
+    expect(input.pack).toEqual({ name: "test-pack", version: "1.0.0" });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("node filesystem adapter rejects a symlinked pack input", async () => {
+  const root = await mkdtemp(join(tmpdir(), "lorelum-pack-"));
+  const target = join(root, "source.yaml");
+  const link = join(root, "pack.yaml");
+  try {
+    await writeFile(target, "name: test-pack\nversion: 1.0.0\n");
+    try {
+      await symlink(target, link, "file");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+
+    await expect(createPackLoader(createNodePackFileSystem()).load(root)).rejects.toMatchObject({
+      code: "pack.unreadable",
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
 });

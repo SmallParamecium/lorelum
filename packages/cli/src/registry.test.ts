@@ -32,7 +32,6 @@ test("validates commands and global options before special responses", () => {
     command: "describe",
     configPath: undefined,
     help: true,
-    lenient: false,
     valid: true,
     version: false,
   });

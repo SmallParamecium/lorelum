@@ -27,6 +27,8 @@ export function createNodePackFileSystem(): PackFileSystem {
         const content = Buffer.alloc(metadata.size);
         let offset = 0;
         while (offset < content.length) {
+          // A descriptor read can be partial, so each read advances from the prior offset.
+          // eslint-disable-next-line no-await-in-loop
           const { bytesRead } = await handle.read(content, offset, content.length - offset, offset);
           if (bytesRead === 0) throw new Error("unexpected end of file");
           offset += bytesRead;

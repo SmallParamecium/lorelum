@@ -33,7 +33,7 @@ export function createProgram(
         options: program.opts(),
         positionals: [],
         runtime,
-        setExitCode: options.setExitCode,
+        ...(options.setExitCode === undefined ? {} : { setExitCode: options.setExitCode }),
       });
     });
 
@@ -86,7 +86,7 @@ function registerCommand(
             .slice(0, -1)
             .filter((argument): argument is string => typeof argument === "string"),
           runtime,
-          setExitCode: options.setExitCode,
+          ...(options.setExitCode === undefined ? {} : { setExitCode: options.setExitCode }),
         });
       });
     }

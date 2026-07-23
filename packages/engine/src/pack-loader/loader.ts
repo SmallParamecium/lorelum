@@ -64,6 +64,8 @@ async function loadPractices(
   let totalBytes = 0;
   const contents: string[] = [];
   for (const entry of markdown.sort((left, right) => left.name.localeCompare(right.name))) {
+    // Read sequentially so the aggregate limit is enforced before the next input opens.
+    // eslint-disable-next-line no-await-in-loop
     const content = await readFile(fileSystem, childPath(root, directory, entry.name), maxPracticeBytes);
     totalBytes += Buffer.byteLength(content);
     if (totalBytes > maxTotalBytes) throw unreadable();

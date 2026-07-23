@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { run } from "./main.js";
 import { protocolResponseSchema, toolVersion } from "./output/protocol.js";
@@ -277,5 +277,5 @@ test("resolves a relative pack path at the CLI runtime boundary", async () => {
   });
 
   expect(await run(["validate", "relative-pack"], { runtime, stdout: new MemoryWriter() })).toBe(0);
-  expect(receivedPath).toBe("/controlled/cwd/relative-pack");
+  expect(receivedPath).toBe(resolve("/controlled/cwd", "relative-pack"));
 });
