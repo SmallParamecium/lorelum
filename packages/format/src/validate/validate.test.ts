@@ -65,6 +65,24 @@ describe("validatePack — format errors", () => {
 });
 
 describe("validatePack — reference integrity errors", () => {
+  test("allows practice and decision references declared later in the input", () => {
+    const input = reactPack();
+    input.decisions.unshift({
+      id: "state.entry",
+      question: "Where should state live?",
+      branches: [
+        {
+          when: "always",
+          recommend: ["react.auth.guard"],
+          reason: "forward practice reference",
+          next: "state.client-vs-server",
+        },
+      ],
+    });
+
+    expect(validatePack(input).errors).toEqual([]);
+  });
+
   test("duplicate practice id", () => {
     const input = reactPack();
     input.practices[1]!.id = input.practices[0]!.id;

@@ -87,6 +87,7 @@ export function validatePack(input: PackInput): ValidationReport {
       practiceIds.add(p.id);
     }
   });
+
   input.decisions.forEach((d, i) => {
     if (decisionIds.has(d.id)) {
       issues.push(
@@ -95,6 +96,10 @@ export function validatePack(input: PackInput): ValidationReport {
     } else {
       decisionIds.add(d.id);
     }
+  });
+
+  // Collect all ids before checking edges so valid forward references are order-independent.
+  input.decisions.forEach((d, i) => {
     d.branches.forEach((b, bi) => {
       b.recommend.forEach((rid) => {
         if (!practiceIds.has(rid)) {

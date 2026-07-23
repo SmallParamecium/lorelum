@@ -7,6 +7,7 @@ import { run } from "./main.js";
 import { protocolResponseSchema, toolVersion } from "./output/protocol.js";
 import { validateProtocolSchema } from "./output/protocol-schema.test-helper.js";
 import { createRuntime } from "./runtime/runtime.js";
+import { PackLoadError, type PackLoader } from "@lorelum/engine";
 
 class MemoryWriter {
   value = "";
@@ -30,7 +31,7 @@ test("returns machine-readable root capability discovery", async () => {
   });
   expect(
     JSON.parse(stdout.value).data.commands.map((command: { name: string }) => command.name),
-  ).toEqual(expect.arrayContaining(["describe", "config", "config.path", "config.show"]));
+  ).toEqual(expect.arrayContaining(["describe", "config", "config.path", "config.show", "validate"]));
   expect(stderr.value).toBe("");
   expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
 });
@@ -167,4 +168,114 @@ test("rejects relative config overrides through the CLI boundary", async () => {
     ok: false,
     error: { code: "config.path_invalid" },
   });
+});
+
+test("describes validate as a public command with its report contract", async () => {
+  const stdout = new MemoryWriter();
+
+  expect(await run(["describe", "validate"], { stdout })).toBe(0);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "describe",
+    ok: true,
+    data: {
+      name: "validate",
+      positionals: [{ name: "pack-path", required: true }],
+      options: expect.arrayContaining([expect.objectContaining({ name: "--lenient" })]),
+      resultSchema: { required: ["valid", "errors", "warnings", "infos"] },
+      errorCodes: expect.arrayContaining(["pack.parse_error"]),
+      exitCodes: [0, 1, 2],
+    },
+  });
+});
+
+function runtimeForPack(packLoader: PackLoader) {
+  return createRuntime({ packLoader });
+}
+
+test("returns validation reports on stdout and uses exit 1 only for invalid loaded packs", async () => {
+  const stdout = new MemoryWriter();
+  const runtime = runtimeForPack({
+    async load() {
+      return {
+        pack: { name: "test-pack", version: "1.0.0" },
+        practices: [],
+        decisions: [
+          {
+            id: "test.entry",
+            question: "What now?",
+            branches: [
+              { when: "always", recommend: ["test.missing"], reason: "exercise an error" },
+            ],
+          },
+        ],
+      };
+    },
+  });
+
+  expect(await run(["validate", "ignored"], { runtime, stdout })).toBe(1);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "validate",
+    ok: true,
+    data: { valid: false, errors: [expect.objectContaining({ code: "dangling-ref" })] },
+  });
+});
+
+test("keeps report content but permits local lenient validation", async () => {
+  const stdout = new MemoryWriter();
+  const runtime = runtimeForPack({
+    async load() {
+      return {
+        pack: { name: "test-pack", version: "1.0.0" },
+        practices: [],
+        decisions: [
+          {
+            id: "test.entry",
+            question: "What now?",
+            branches: [
+              { when: "always", recommend: ["test.missing"], reason: "exercise an error" },
+            ],
+          },
+        ],
+      };
+    },
+  });
+
+  expect(await run(["validate", "ignored", "--lenient"], { runtime, stdout })).toBe(0);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "validate",
+    ok: true,
+    data: { valid: false },
+  });
+});
+
+test("normalizes pack loader failures to a failure envelope", async () => {
+  const stdout = new MemoryWriter();
+  const runtime = runtimeForPack({
+    async load() {
+      throw new PackLoadError("pack.parse_error", "A pack document could not be parsed.");
+    },
+  });
+
+  expect(await run(["validate", "ignored"], { runtime, stdout })).toBe(2);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "validate",
+    ok: false,
+    error: { code: "pack.parse_error", message: "A pack document could not be parsed." },
+  });
+});
+
+test("resolves a relative pack path at the CLI runtime boundary", async () => {
+  let receivedPath = "";
+  const runtime = createRuntime({
+    workingDirectory: "/controlled/cwd",
+    packLoader: {
+      async load(path) {
+        receivedPath = path;
+        return { pack: { name: "test-pack", version: "1.0.0" }, practices: [], decisions: [] };
+      },
+    },
+  });
+
+  expect(await run(["validate", "relative-pack"], { runtime, stdout: new MemoryWriter() })).toBe(0);
+  expect(receivedPath).toBe("/controlled/cwd/relative-pack");
 });

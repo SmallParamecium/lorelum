@@ -25,3 +25,17 @@ export function parseFrontmatter(markdown: string): ParsedFrontmatter {
   const result = matter(markdown);
   return { data: result.data, content: result.content };
 }
+
+interface YamlEngine {
+  parse(source: string): unknown;
+}
+
+interface MatterWithEngines {
+  engines: { yaml: YamlEngine };
+}
+
+/** Parse a standalone YAML document using the same YAML engine as frontmatter. */
+export function parseYamlDocument(source: string): unknown {
+  const engine = (matter as unknown as MatterWithEngines).engines.yaml;
+  return engine.parse(source);
+}

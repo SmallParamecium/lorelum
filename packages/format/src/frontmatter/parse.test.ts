@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { PracticeSchema } from "../schema";
-import { parseFrontmatter } from "./parse";
+import { parseFrontmatter, parseYamlDocument } from "./parse";
 
 describe("parseFrontmatter", () => {
   test("parses frontmatter and body", () => {
@@ -59,5 +59,12 @@ Guidance body.`;
     const { data } = parseFrontmatter(md);
     const r = PracticeSchema.safeParse(data);
     expect(r.success).toBe(true);
+  });
+
+  test("parses standalone YAML documents for pack metadata and decisions", () => {
+    expect(parseYamlDocument("name: react-fullstack\nversion: 0.1.0\n")).toEqual({
+      name: "react-fullstack",
+      version: "0.1.0",
+    });
   });
 });

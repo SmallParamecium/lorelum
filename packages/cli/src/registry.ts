@@ -1,3 +1,5 @@
+import { validatePack } from "@lorelum/format";
+
 import type { OutputWriter } from "./output/protocol.js";
 import { renderSuccess } from "./output/protocol.js";
 import type { CliRuntime } from "./runtime/runtime.js";
@@ -33,6 +35,7 @@ export interface CommandInvocation {
   options: Readonly<Record<string, unknown>>;
   positionals: readonly string[];
   runtime: CliRuntime;
+  setExitCode?(code: 1): void;
 }
 
 export type CommandHandler = (
@@ -51,6 +54,15 @@ const globalOptions: readonly CommandOption[] = [
     description: "Set stderr log verbosity.",
     required: false,
     values: logLevels,
+  },
+];
+
+const validateOptions: readonly CommandOption[] = [
+  ...globalOptions,
+  {
+    name: "--lenient",
+    description: "Keep exit code 0 when the loaded pack has validation errors.",
+    required: false,
   },
 ];
 
@@ -128,6 +140,25 @@ export const commandRegistry: CommandDefinition[] = [
         configuration: loaded.configuration,
         source: loaded.source,
       });
+    },
+  },
+  {
+    usage: "validate <pack-path>",
+    name: "validate",
+    summary: "Validate an explicitly selected v1 knowledge pack for authors and CI.",
+    positionals: [{ name: "pack-path", required: true }],
+    options: validateOptions,
+    resultSchema: {
+      type: "object",
+      required: ["valid", "errors", "warnings", "infos"],
+    },
+    errorCodes: ["usage.invalid", "pack.path_invalid", "pack.unreadable", "pack.parse_error"],
+    exitCodes: [0, 1, 2],
+    handler: async (output, invocation) => {
+      const report = validatePack(await invocation.runtime.loadPack(invocation.positionals[0]!));
+      invocation.runtime.logger.log("info", "Validated explicit knowledge pack input.");
+      renderSuccess(output, "validate", report);
+      if (!report.valid && invocation.options.lenient !== true) invocation.setExitCode?.(1);
     },
   },
 ];

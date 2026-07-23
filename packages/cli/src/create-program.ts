@@ -7,7 +7,15 @@ import type { LogLevel } from "./runtime/logger.js";
 
 export { type CliRuntime } from "./runtime/runtime.js";
 
-export function createProgram(runtime: CliRuntime, output: OutputWriter): Command {
+export interface ProgramOptions {
+  setExitCode?(code: 1): void;
+}
+
+export function createProgram(
+  runtime: CliRuntime,
+  output: OutputWriter,
+  options: ProgramOptions = {},
+): Command {
   const program = new Command();
 
   program
@@ -25,6 +33,7 @@ export function createProgram(runtime: CliRuntime, output: OutputWriter): Comman
         options: program.opts(),
         positionals: [],
         runtime,
+        setExitCode: options.setExitCode,
       });
     });
 
@@ -35,7 +44,7 @@ export function createProgram(runtime: CliRuntime, output: OutputWriter): Comman
   }
 
   for (const definition of commandRegistry) {
-    registerCommand(program, definition, runtime, output);
+    registerCommand(program, definition, runtime, output, options);
   }
 
   return program;
@@ -46,6 +55,7 @@ function registerCommand(
   definition: CommandDefinition,
   runtime: CliRuntime,
   output: OutputWriter,
+  options: ProgramOptions,
 ): void {
   let parent = program;
   const segments = definition.name.split(".");
@@ -76,6 +86,7 @@ function registerCommand(
             .slice(0, -1)
             .filter((argument): argument is string => typeof argument === "string"),
           runtime,
+          setExitCode: options.setExitCode,
         });
       });
     }
