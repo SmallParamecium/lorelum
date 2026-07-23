@@ -3,7 +3,7 @@ import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { loadConfig, resolveConfigPath } from "./config.js";
+import { loadConfig, resolveConfigPath, type ConfigFileSystem } from "./config.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -95,6 +95,23 @@ test("rejects invalid configuration files without exposing their contents", asyn
   await expect(loadConfig(oversized, true)).rejects.toMatchObject({ code: "config.too_large" });
 });
 
+test("uses an injected filesystem context for deterministic configuration reads", async () => {
+  const fileSystem = memoryFileSystem('{"version":1}');
+
+  await expect(loadConfig("/controlled/config.json", true, fileSystem)).resolves.toEqual({
+    configuration: { version: 1 },
+    source: "file",
+  });
+});
+
+test("rejects content that grows beyond the size limit after metadata validation", async () => {
+  const fileSystem = memoryFileSystem('{"version":1}', "x".repeat(64 * 1024 + 1));
+
+  await expect(loadConfig("/controlled/config.json", true, fileSystem)).rejects.toMatchObject({
+    code: "config.too_large",
+  });
+});
+
 if (process.platform !== "win32") {
   test("rejects symbolic links", async () => {
     const directory = await createTemporaryDirectory();
@@ -111,4 +128,27 @@ async function createTemporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "lorelum-cli-"));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function memoryFileSystem(
+  metadataContent: string,
+  readContent: string = metadataContent,
+): ConfigFileSystem {
+  const metadata = { identity: "memory:1", kind: "file" as const, size: Buffer.byteLength(metadataContent) };
+  return {
+    async lstat() {
+      return metadata;
+    },
+    async openReadOnly() {
+      return {
+        async close() {},
+        async read() {
+          return readContent;
+        },
+        async stat() {
+          return metadata;
+        },
+      };
+    },
+  };
 }

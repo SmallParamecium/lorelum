@@ -11,9 +11,28 @@ const configSchema = z.object({ version: z.literal(1) }).strict();
 
 export type LorelumConfig = z.infer<typeof configSchema>;
 
+export interface ConfigFileMetadata {
+  identity: string;
+  kind: "file" | "other" | "symlink";
+  size: number;
+}
+
+export interface ConfigFileHandle {
+  close(): Promise<void>;
+  read(maxBytes: number): Promise<string>;
+  stat(): Promise<ConfigFileMetadata>;
+}
+
+/** Filesystem boundary for deterministic, bounded configuration reads. */
+export interface ConfigFileSystem {
+  lstat(path: string): Promise<ConfigFileMetadata>;
+  openReadOnly(path: string): Promise<ConfigFileHandle>;
+}
+
 export interface ConfigEnvironment {
   env?: Record<string, string | undefined>;
   explicitPath?: string;
+  fileSystem?: ConfigFileSystem;
   homeDirectory?: string;
   platform?: NodeJS.Platform;
 }
@@ -75,10 +94,14 @@ export function resolveConfigPath(options: ConfigEnvironment = {}): ResolvedConf
   };
 }
 
-export async function loadConfig(path: string, explicit: boolean): Promise<LoadedConfig> {
-  let metadata: Awaited<ReturnType<typeof lstat>>;
+export async function loadConfig(
+  path: string,
+  explicit: boolean,
+  fileSystem: ConfigFileSystem = createNodeConfigFileSystem(),
+): Promise<LoadedConfig> {
+  let metadata: ConfigFileMetadata;
   try {
-    metadata = await lstat(path);
+    metadata = await fileSystem.lstat(path);
   } catch (error) {
     if (!explicit && isNotFoundError(error)) {
       return { configuration: { version: 1 }, source: "default" };
@@ -86,29 +109,34 @@ export async function loadConfig(path: string, explicit: boolean): Promise<Loade
     throw new CliError("config.unreadable", "Unable to read the local configuration.");
   }
 
-  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+  if (metadata.kind !== "file") {
     throw new CliError("config.unreadable", "The local configuration must be a regular file.");
   }
+  if (metadata.size > maxConfigBytes) {
+    throw new CliError("config.too_large", "The local configuration exceeds 64 KiB.");
+  }
 
-  const handle = await openConfigFile(path);
+  let handle: ConfigFileHandle | undefined;
   try {
+    handle = await fileSystem.openReadOnly(path);
     const openedMetadata = await handle.stat();
-    if (!openedMetadata.isFile() || !sameFile(metadata, openedMetadata)) {
+    if (openedMetadata.kind !== "file" || !sameFile(metadata, openedMetadata)) {
       throw new CliError("config.unreadable", "Unable to read the local configuration.");
     }
     if (openedMetadata.size > maxConfigBytes) {
       throw new CliError("config.too_large", "The local configuration exceeds 64 KiB.");
     }
 
-    const contents = await handle.readFile({ encoding: "utf8" });
+    const contents = await handle.read(maxConfigBytes);
+    if (Buffer.byteLength(contents) > maxConfigBytes) {
+      throw new CliError("config.too_large", "The local configuration exceeds 64 KiB.");
+    }
     return parseConfig(contents);
   } catch (error) {
-    if (error instanceof CliError) {
-      throw error;
-    }
+    if (error instanceof CliError) throw error;
     throw new CliError("config.unreadable", "Unable to read the local configuration.");
   } finally {
-    await handle.close().catch(() => undefined);
+    await handle?.close().catch(() => undefined);
   }
 }
 
@@ -119,12 +147,41 @@ function resolveAbsolutePath(path: typeof posix, value: string, name: string): s
   return path.normalize(value);
 }
 
-async function openConfigFile(path: string) {
-  try {
-    return await open(path, "r");
-  } catch {
-    throw new CliError("config.unreadable", "Unable to read the local configuration.");
-  }
+function createNodeConfigFileSystem(): ConfigFileSystem {
+  return {
+    async lstat(path) {
+      return toMetadata(await lstat(path));
+    },
+    async openReadOnly(path) {
+      const handle = await open(path, "r");
+      return {
+        close: () => handle.close(),
+        async read(maxBytes) {
+          const content = Buffer.alloc(maxBytes + 1);
+          let offset = 0;
+          while (offset < content.length) {
+            // Descriptor reads can be partial, so each read advances from the prior offset.
+            // eslint-disable-next-line no-await-in-loop
+            const { bytesRead } = await handle.read(content, offset, content.length - offset, offset);
+            if (bytesRead === 0) break;
+            offset += bytesRead;
+          }
+          return content.subarray(0, offset).toString("utf8");
+        },
+        async stat() {
+          return toMetadata(await handle.stat());
+        },
+      };
+    },
+  };
+}
+
+function toMetadata(stats: Stats): ConfigFileMetadata {
+  return {
+    identity: `${stats.dev}:${stats.ino}`,
+    kind: stats.isSymbolicLink() ? "symlink" : stats.isFile() ? "file" : "other",
+    size: stats.size,
+  };
 }
 
 function parseConfig(contents: string): LoadedConfig {
@@ -136,9 +193,7 @@ function parseConfig(contents: string): LoadedConfig {
   }
 
   const result = configSchema.safeParse(parsed);
-  if (result.success) {
-    return { configuration: result.data, source: "file" };
-  }
+  if (result.success) return { configuration: result.data, source: "file" };
 
   if (hasUnknownField(parsed)) {
     throw new CliError(
@@ -149,8 +204,8 @@ function parseConfig(contents: string): LoadedConfig {
   throw new CliError("config.unsupported_version", "The local configuration must have version 1.");
 }
 
-function sameFile(before: Stats, after: Stats): boolean {
-  return before.dev === after.dev && before.ino === after.ino;
+function sameFile(before: ConfigFileMetadata, after: ConfigFileMetadata): boolean {
+  return before.identity === after.identity;
 }
 
 function isNotFoundError(error: unknown): error is NodeJS.ErrnoException {

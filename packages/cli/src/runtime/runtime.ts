@@ -26,6 +26,6 @@ export function createRuntime(options: RuntimeOptions = {}): CliRuntime {
     configPath: resolved.path,
     configSource: resolved.source,
     logger: new Logger(options.errorWriter ?? process.stderr),
-    loadConfig: () => loadConfig(resolved.path, explicit),
+    loadConfig: () => loadConfig(resolved.path, explicit, options.fileSystem),
   };
 }
