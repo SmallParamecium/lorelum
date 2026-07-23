@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
-import { createProgram, type CliRuntime } from "./create-program.js";
+import { createProgram } from "./create-program.js";
 import { renderFailure, renderSuccess, toolVersion, type OutputWriter } from "./output/protocol.js";
 import { describeCommand, inspectInvocation } from "./registry.js";
 import { toCliError } from "./runtime/errors.js";
-import { Logger } from "./runtime/logger.js";
+import { createRuntime, type CliRuntime, type RuntimeOptions } from "./runtime/runtime.js";
 
 export interface RunOptions {
+  createRuntime?: (options: RuntimeOptions) => CliRuntime;
   runtime?: CliRuntime;
   stderr?: OutputWriter;
   stdout?: OutputWriter;
@@ -33,7 +34,11 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
       return 0;
     }
 
-    const runtime = options.runtime ?? { logger: new Logger(stderr) };
+    const runtimeOptions: RuntimeOptions = {
+      errorWriter: stderr,
+      ...(invocation.configPath === undefined ? {} : { explicitPath: invocation.configPath }),
+    };
+    const runtime = options.runtime ?? (options.createRuntime ?? createRuntime)(runtimeOptions);
     const program = createProgram(runtime, stdout);
     await program.parseAsync(arguments_, { from: "user" });
     return 0;
