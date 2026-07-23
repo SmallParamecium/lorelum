@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import cliManifest from "../packages/cli/package.json";
+import goldenResponses from "../packages/cli/src/output/protocol.fixture.json";
 import { protocolResponseSchema } from "../packages/cli/src/output/protocol.js";
+import { validateProtocolSchema } from "../packages/cli/src/output/protocol-schema.js";
 
 const [binary, expectedPlatform, expectedArchitecture] = process.argv.slice(2);
 if (binary === undefined || expectedPlatform === undefined || expectedArchitecture === undefined) {
@@ -12,22 +15,65 @@ if (process.platform !== expectedPlatform || process.arch !== expectedArchitectu
   throw new Error("Runner platform or architecture does not match the CI matrix expectation.");
 }
 
+const describeGolden = goldenResponses.find((response) => response.command === "describe");
+const invalidGolden = goldenResponses.find((response) => response.command === "unknown");
+if (describeGolden === undefined || invalidGolden === undefined) {
+  throw new Error("Protocol golden fixtures are incomplete.");
+}
+
 const directory = await mkdtemp(join(tmpdir(), "lorelum-binary-"));
 try {
   const packDirectory = join(directory, "pack");
+  const configPath = join(directory, "config.json");
   await mkdir(packDirectory);
   await writeFile(join(packDirectory, "pack.yaml"), "name: binary-pack\nversion: 1.0.0\n");
+  await writeFile(configPath, '{"version":1}');
 
-  await assertResponse([binary], 0, "describe");
-  await assertResponse([binary, "--version"], 0, "version");
-  await assertResponse([binary, "describe", "validate"], 0, "describe");
-  await assertResponse([binary, "config", "path"], 0, "config.path");
-  await assertResponse([binary, "validate", packDirectory], 0, "validate");
+  assertGoldenEnvelope(await assertResponse([binary], 0, "describe"), asRecord(describeGolden));
+  const version = await assertResponse([binary, "--version"], 0, "version");
+  assertSuccess(version);
+  if (version.toolVersion !== cliManifest.version || data(version).toolVersion !== cliManifest.version) {
+    throw new Error("Compiled binary tool version does not match CLI package metadata.");
+  }
+
+  const describe = await assertResponse([binary, "describe", "validate"], 0, "describe");
+  assertSuccess(describe);
+  if (!Array.isArray(data(describe).exitCodes) || !data(describe).exitCodes.includes(1)) {
+    throw new Error("Compiled binary does not describe validate's report exit code.");
+  }
+
+  const config = await assertResponse([binary, "--config", configPath, "config", "show"], 0, "config.show");
+  assertSuccess(config);
+  if (data(config).source !== "file" || asRecord(data(config).configuration).version !== 1) {
+    throw new Error("Compiled binary did not load the explicit read-only configuration.");
+  }
+
+  const valid = await assertResponse([binary, "validate", packDirectory], 0, "validate");
+  assertSuccess(valid);
+  if (data(valid).valid !== true) throw new Error("Compiled binary rejected a valid pack.");
+
+  await writeFile(
+    join(packDirectory, "decisions.yaml"),
+    "- id: binary.entry\n  question: What next?\n  branches:\n    - when: always\n      recommend: [binary.missing]\n      reason: Exercise validation failure\n",
+  );
+  const invalidPack = await assertResponse([binary, "validate", packDirectory], 1, "validate");
+  assertSuccess(invalidPack);
+  if (
+    data(invalidPack).valid !== false ||
+    !asArray(data(invalidPack).errors).some((issue) => asRecord(issue).code === "dangling-ref")
+  ) {
+    throw new Error("Compiled binary did not return the expected validation report.");
+  }
+
+  const lenient = await assertResponse([binary, "validate", packDirectory, "--lenient"], 0, "validate");
+  assertSuccess(lenient);
+  if (data(lenient).valid !== false) throw new Error("Lenient validation changed the report content.");
+
   const invalid = await run([binary, "--private-token"]);
   if (invalid.exitCode !== 2 || invalid.stderr !== "" || invalid.stdout.includes("private-token")) {
     throw new Error("Invalid invocation did not preserve the public protocol boundary.");
   }
-  assertEnvelope(invalid.stdout, "unknown");
+  assertGoldenEnvelope(assertEnvelope(invalid.stdout, "unknown"), asRecord(invalidGolden));
 } finally {
   await rm(directory, { force: true, recursive: true });
 }
@@ -36,30 +82,63 @@ async function assertResponse(
   command: string[],
   exitCode: number,
   expectedCommand: string,
-): Promise<void> {
+): Promise<Record<string, unknown>> {
   const response = await run(command);
   if (response.exitCode !== exitCode || response.stderr !== "") {
     throw new Error(`Compiled binary fixture failed for ${expectedCommand}.`);
   }
-  assertEnvelope(response.stdout, expectedCommand);
+  return assertEnvelope(response.stdout, expectedCommand);
 }
 
-function assertEnvelope(stdout: string, expectedCommand: string): void {
+function assertEnvelope(stdout: string, expectedCommand: string): Record<string, unknown> {
   const lines = stdout.trimEnd().split("\n");
-  if (lines.length !== 1)
-    throw new Error("Compiled binary wrote more than one stdout protocol line.");
-  const envelope = JSON.parse(lines[0] ?? "") as { command?: string };
-  if (envelope.command !== expectedCommand || !matchesProtocolSchema(envelope)) {
-    throw new Error("Compiled binary response does not match the protocol schema.");
+  if (lines.length !== 1) throw new Error("Compiled binary wrote more than one stdout protocol line.");
+
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(lines[0] ?? "");
+  } catch {
+    throw new Error("Compiled binary stdout is not JSON.");
+  }
+  const schemaErrors = validateProtocolSchema(envelope, protocolResponseSchema);
+  if (schemaErrors.length > 0) {
+    throw new Error(`Compiled binary response violates protocol schema: ${schemaErrors.join("; ")}`);
+  }
+
+  const record = asRecord(envelope);
+  if (record.command !== expectedCommand) throw new Error("Compiled binary response has an unexpected command.");
+  if (record.toolVersion !== cliManifest.version) {
+    throw new Error("Compiled binary response version does not match CLI package metadata.");
+  }
+  return record;
+}
+
+function assertGoldenEnvelope(envelope: Record<string, unknown>, golden: Record<string, unknown>): void {
+  for (const property of ["protocolVersion", "toolVersion", "command", "ok"]) {
+    if (envelope[property] !== golden[property]) {
+      throw new Error(`Compiled binary response diverges from the ${String(property)} golden fixture.`);
+    }
   }
 }
 
-function matchesProtocolSchema(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return protocolResponseSchema.oneOf.some((branch) =>
-    branch.required.every((property) => property in record),
-  );
+function assertSuccess(envelope: Record<string, unknown>): void {
+  if (envelope.ok !== true) throw new Error("Compiled binary returned a failure envelope.");
+}
+
+function data(envelope: Record<string, unknown>): Record<string, unknown> {
+  return asRecord(envelope.data);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Compiled binary response has an invalid object field.");
+  }
+  return value as Record<string, unknown>;
+}
+
+function asArray(value: unknown): unknown[] {
+  if (!Array.isArray(value)) throw new Error("Compiled binary response has an invalid array field.");
+  return value;
 }
 
 async function run(command: string[]) {

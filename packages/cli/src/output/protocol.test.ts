@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { protocolResponseSchema, renderFailure, renderSuccess, toolVersion } from "./protocol.js";
 import goldenResponses from "./protocol.fixture.json";
-import { validateProtocolSchema } from "./protocol-schema.test-helper.js";
+import { validateProtocolSchema } from "./protocol-schema.js";
 
 class MemoryWriter {
   value = "";
