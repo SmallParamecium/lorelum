@@ -205,7 +205,8 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
   }
 
   const configPath = configPathFrom(suppliedOptions);
-  if (help && version) return invalidInvocation(commandFromPositionals(positionals), help, version, configPath);
+  if (help && version)
+    return invalidInvocation(commandFromPositionals(positionals), help, version, configPath);
 
   const command = commandFromPositionals(positionals);
   if (command === "unknown") return invalidInvocation(command, help, version, configPath);
@@ -213,7 +214,10 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
   const definition = command === "lore" ? rootCommand : findCommand(command);
   if (
     definition === undefined ||
-    !hasValidPositionals(definition, positionals.slice(commandTokenCount(command)))
+    !hasValidPositionals(
+      materializeCommandDefinition(definition),
+      positionals.slice(commandTokenCount(command)),
+    )
   ) {
     return invalidInvocation(command, help, version, configPath);
   }
@@ -288,7 +292,8 @@ function parseOption(
   if (option === undefined) return undefined;
 
   const value = equalIndex === -1 ? nextArgument : argument.slice(equalIndex + 1);
-  if (!option.takesValue) return equalIndex === -1 ? { consumeNext: false, option: { option } } : undefined;
+  if (!option.takesValue)
+    return equalIndex === -1 ? { consumeNext: false, option: { option } } : undefined;
   if (value === undefined || value.startsWith("-") || !hasAllowedValue(option, value))
     return undefined;
 
@@ -312,14 +317,20 @@ function hasValidPositionals(
   });
 }
 
-function hasAllowedOptions(definition: CommandDefinition, options: readonly ParsedOption[]): boolean {
+function hasAllowedOptions(
+  definition: CommandDefinition,
+  options: readonly ParsedOption[],
+): boolean {
   const allowed = new Set(
     [...rootCommand.options, ...definition.options].map(toOptionSpec).map((option) => option.flag),
   );
   return options.every((option) => allowed.has(option.option.flag));
 }
 
-function hasRequiredOptions(definition: CommandDefinition, options: readonly ParsedOption[]): boolean {
+function hasRequiredOptions(
+  definition: CommandDefinition,
+  options: readonly ParsedOption[],
+): boolean {
   const suppliedFlags = new Set(options.map((option) => option.option.flag));
   return [...rootCommand.options, ...definition.options]
     .filter((option) => option.required)

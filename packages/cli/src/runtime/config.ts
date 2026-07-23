@@ -62,7 +62,7 @@ export function resolveConfigPath(options: ConfigEnvironment = {}): ResolvedConf
   }
 
   return {
-      path: path.join(
+    path: path.join(
       resolveAbsolutePath(
         path,
         environment.XDG_CONFIG_HOME ?? path.join(homeDirectory, ".config"),

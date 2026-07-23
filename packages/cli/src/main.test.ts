@@ -124,7 +124,7 @@ test("reports deterministic local configuration paths and defaults", async () =>
 
   const show = new MemoryWriter();
   const missingRuntime = createRuntime({
-    env: { LORELUM_CONFIG: join("/tmp", "lorelum-config-does-not-exist.json") },
+    env: { LORELUM_CONFIG: "/tmp/lorelum-config-does-not-exist.json" },
     platform: "linux",
   });
   expect(await run(["config", "show"], { runtime: missingRuntime, stdout: show })).toBe(2);
@@ -151,4 +151,20 @@ test("loads an explicitly selected configuration through the CLI boundary", asyn
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
+});
+
+test("rejects relative config overrides through the CLI boundary", async () => {
+  const stdout = new MemoryWriter();
+
+  expect(
+    await run(["--config=relative.json", "config", "path"], {
+      createRuntime: (options) => createRuntime({ ...options, platform: "linux" }),
+      stdout,
+    }),
+  ).toBe(2);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "config.path",
+    ok: false,
+    error: { code: "config.path_invalid" },
+  });
 });

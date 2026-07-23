@@ -53,6 +53,19 @@ test("uses XDG configuration paths without consulting the working directory", ()
   ).toEqual({ path: "/home/agent/.lore-config/lorelum/config.json", source: "default" });
 });
 
+test("uses APPDATA for the Windows default path", () => {
+  expect(
+    resolveConfigPath({
+      env: { APPDATA: "C:\\Users\\agent\\AppData\\Roaming" },
+      homeDirectory: "C:\\Users\\agent",
+      platform: "win32",
+    }),
+  ).toEqual({
+    path: "C:\\Users\\agent\\AppData\\Roaming\\Lorelum\\config.json",
+    source: "default",
+  });
+});
+
 test("uses built-in defaults only when the default path is absent", async () => {
   const directory = await createTemporaryDirectory();
   const missing = join(directory, "missing.json");

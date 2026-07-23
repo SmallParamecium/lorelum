@@ -44,6 +44,9 @@ test("validates commands and global options before special responses", () => {
     configPath: "/tmp/config.json",
     valid: true,
   });
+  expect(describeCommand("config.show")).toMatchObject({
+    errorCodes: expect.arrayContaining(["config.unknown_field", "config.unsupported_version"]),
+  });
 });
 
 test("derives invocation validation, parser options, and describe metadata from registered commands", async () => {
