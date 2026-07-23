@@ -1,8 +1,7 @@
 import { Command, Option } from "commander";
 
 import type { OutputWriter } from "./output/protocol.js";
-import { renderSuccess } from "./output/protocol.js";
-import { commandRegistry, describeCommand } from "./registry.js";
+import { commandRegistry, rootCommand } from "./registry.js";
 import { Logger, logLevels, type LogLevel } from "./runtime/logger.js";
 
 export interface CliRuntime {
@@ -28,23 +27,15 @@ export function createProgram(runtime: CliRuntime, output: OutputWriter): Comman
       runtime.logger.setLevel(program.opts<{ logLevel: LogLevel }>().logLevel);
     })
     .action(() => {
-      renderSuccess(output, "describe", describeCommand());
+      rootCommand.handler(output);
     });
 
   for (const definition of commandRegistry) {
-    if (definition.name !== "describe") {
-      continue;
-    }
-
     program
-      .command("describe [command]")
+      .command(definition.usage)
       .description(definition.summary)
       .action((target?: string) => {
-        const description = describeCommand(target === undefined ? undefined : "describe");
-        if (description === undefined) {
-          throw new Error("Unreachable command registry state.");
-        }
-        renderSuccess(output, "describe", description);
+        definition.handler(output, target);
       });
   }
 

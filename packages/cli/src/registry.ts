@@ -1,4 +1,5 @@
 import { logLevels, type LogLevel } from "./runtime/logger.js";
+import { renderSuccess, type OutputWriter } from "./output/protocol.js";
 
 export interface CommandOption {
   name: string;
@@ -14,6 +15,7 @@ export interface PositionalArgument {
 }
 
 export interface CommandDefinition {
+  usage: string;
   name: string;
   summary: string;
   positionals: readonly PositionalArgument[];
@@ -21,7 +23,10 @@ export interface CommandDefinition {
   resultSchema: object;
   errorCodes: readonly string[];
   exitCodes: readonly number[];
+  handler: CommandHandler;
 }
+
+export type CommandHandler = (output: OutputWriter, target?: string) => void;
 
 const globalOptions = [
   {
@@ -34,6 +39,7 @@ const globalOptions = [
 
 export const commandRegistry = [
   {
+    usage: "describe [command]",
     name: "describe",
     summary: "Return machine-readable command capabilities.",
     positionals: [
@@ -58,10 +64,16 @@ export const commandRegistry = [
     },
     errorCodes: ["usage.invalid", "runtime.unexpected"],
     exitCodes: [0, 2],
+    handler: (output, target) => {
+      const description = describeCommand(target === undefined ? undefined : "describe");
+      if (description === undefined) throw new Error("Unreachable command registry state.");
+      renderSuccess(output, "describe", description);
+    },
   },
 ] as const satisfies readonly CommandDefinition[];
 
 export const rootCommand: CommandDefinition = {
+  usage: "lore",
   name: "lore",
   summary: "Engineering knowledge tooling for AI coding agents.",
   positionals: [],
@@ -72,6 +84,9 @@ export const rootCommand: CommandDefinition = {
   },
   errorCodes: ["usage.invalid", "runtime.unexpected"],
   exitCodes: [0, 2],
+  handler: (output) => {
+    renderSuccess(output, "describe", describeCommand());
+  },
 };
 
 export type KnownCommand = "lore" | "describe";
@@ -125,6 +140,12 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
         return invalidInvocation(positionals, help, version);
       }
       index += 1;
+      continue;
+    }
+
+    if (argument.startsWith("--log-level=")) {
+      const level = argument.slice("--log-level=".length);
+      if (!isLogLevel(level)) return invalidInvocation(positionals, help, version);
       continue;
     }
 

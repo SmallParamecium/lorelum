@@ -66,6 +66,13 @@ test("returns structured help and version responses", async () => {
   });
 });
 
+test("accepts the documented equals form of global options", async () => {
+  const stdout = new MemoryWriter();
+
+  expect(await run(["--log-level=debug"], { stdout })).toBe(0);
+  expect(JSON.parse(stdout.value)).toMatchObject({ command: "describe", ok: true });
+});
+
 test("validates invalid calls before help and version responses", async () => {
   const invalidCalls = [
     ["unknown", "--help"],
