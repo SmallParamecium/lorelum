@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 
 import { run } from "./main.js";
-import { toolVersion } from "./output/protocol.js";
+import { protocolResponseSchema, toolVersion } from "./output/protocol.js";
+import { validateProtocolSchema } from "./output/protocol-schema.test-helper.js";
 
 class MemoryWriter {
   value = "";
@@ -27,6 +28,7 @@ test("returns machine-readable root capability discovery", async () => {
     },
   });
   expect(stderr.value).toBe("");
+  expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
 });
 
 test("returns command metadata through describe", async () => {
@@ -43,6 +45,7 @@ test("returns command metadata through describe", async () => {
       exitCodes: [0, 2],
     },
   });
+  expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
 });
 
 test("returns structured help and version responses", async () => {
@@ -55,6 +58,7 @@ test("returns structured help and version responses", async () => {
     ok: true,
     data: { name: "describe" },
   });
+  expect(validateProtocolSchema(JSON.parse(help.value), protocolResponseSchema)).toEqual([]);
 
   expect(await run(["--version"], { stdout: version })).toBe(0);
   expect(JSON.parse(version.value)).toEqual({
@@ -64,6 +68,7 @@ test("returns structured help and version responses", async () => {
     ok: true,
     data: { protocolVersion: 1, toolVersion },
   });
+  expect(validateProtocolSchema(JSON.parse(version.value), protocolResponseSchema)).toEqual([]);
 });
 
 test("accepts the documented equals form of global options", async () => {
@@ -93,6 +98,7 @@ test("validates invalid calls before help and version responses", async () => {
       });
       expect(stdout.value).not.toContain("private-token");
       expect(stderr.value).toBe("");
+      expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
     }),
   );
 });

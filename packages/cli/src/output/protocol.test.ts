@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 
 import { protocolResponseSchema, renderFailure, renderSuccess, toolVersion } from "./protocol.js";
+import goldenResponses from "./protocol.fixture.json";
+import { validateProtocolSchema } from "./protocol-schema.test-helper.js";
 
 class MemoryWriter {
   value = "";
@@ -23,6 +25,7 @@ test("renders one JSON line for successful protocol responses", () => {
     ok: true,
     data: { name: "lore" },
   });
+  expect(validateProtocolSchema(JSON.parse(writer.value), protocolResponseSchema)).toEqual([]);
 });
 
 test("renders structured protocol failures", () => {
@@ -35,10 +38,34 @@ test("renders structured protocol failures", () => {
     ok: false,
     error: { code: "usage.invalid" },
   });
+  expect(validateProtocolSchema(JSON.parse(writer.value), protocolResponseSchema)).toEqual([]);
 });
 
-test("exports a schema that distinguishes successful and failed envelopes", () => {
-  expect(protocolResponseSchema.oneOf).toHaveLength(2);
-  expect(protocolResponseSchema.oneOf[0]?.properties.ok).toEqual({ const: true });
-  expect(protocolResponseSchema.oneOf[1]?.properties.ok).toEqual({ const: false });
+test("validates golden success and failure envelopes with the exported JSON Schema", () => {
+  for (const response of goldenResponses) {
+    expect(response.toolVersion).toBe(toolVersion);
+    expect(validateProtocolSchema(response, protocolResponseSchema)).toEqual([]);
+  }
+});
+
+test("rejects malformed envelopes with the exported JSON Schema", () => {
+  expect(
+    validateProtocolSchema(
+      { protocolVersion: 1, toolVersion, command: "describe", ok: true },
+      protocolResponseSchema,
+    ),
+  ).not.toEqual([]);
+  expect(
+    validateProtocolSchema(
+      {
+        protocolVersion: 1,
+        toolVersion,
+        command: "describe",
+        ok: true,
+        data: {},
+        extra: true,
+      },
+      protocolResponseSchema,
+    ),
+  ).not.toEqual([]);
 });

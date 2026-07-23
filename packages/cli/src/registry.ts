@@ -1,4 +1,5 @@
-import { logLevels, type LogLevel } from "./runtime/logger.js";
+import { CliError } from "./runtime/errors.js";
+import { logLevels } from "./runtime/logger.js";
 import { renderSuccess, type OutputWriter } from "./output/protocol.js";
 
 export interface CommandOption {
@@ -26,9 +27,14 @@ export interface CommandDefinition {
   handler: CommandHandler;
 }
 
-export type CommandHandler = (output: OutputWriter, target?: string) => void;
+export interface CommandInvocation {
+  options: Readonly<Record<string, unknown>>;
+  positionals: readonly string[];
+}
 
-const globalOptions = [
+export type CommandHandler = (output: OutputWriter, invocation: CommandInvocation) => void;
+
+const globalOptions: readonly CommandOption[] = [
   {
     name: "--log-level <level>",
     description: "Set stderr log verbosity.",
@@ -37,7 +43,7 @@ const globalOptions = [
   },
 ] as const satisfies readonly CommandOption[];
 
-export const commandRegistry = [
+export const commandRegistry: CommandDefinition[] = [
   {
     usage: "describe [command]",
     name: "describe",
@@ -46,7 +52,6 @@ export const commandRegistry = [
       {
         name: "command",
         required: false,
-        values: ["describe"],
       },
     ],
     options: globalOptions,
@@ -64,13 +69,15 @@ export const commandRegistry = [
     },
     errorCodes: ["usage.invalid", "runtime.unexpected"],
     exitCodes: [0, 2],
-    handler: (output, target) => {
-      const description = describeCommand(target === undefined ? undefined : "describe");
-      if (description === undefined) throw new Error("Unreachable command registry state.");
+    handler: (output, invocation) => {
+      const description = describeCommand(invocation.positionals[0]);
+      if (description === undefined) {
+        throw new CliError("usage.invalid", "The command invocation is invalid.");
+      }
       renderSuccess(output, "describe", description);
     },
   },
-] as const satisfies readonly CommandDefinition[];
+];
 
 export const rootCommand: CommandDefinition = {
   usage: "lore",
@@ -89,21 +96,18 @@ export const rootCommand: CommandDefinition = {
   },
 };
 
-export type KnownCommand = "lore" | "describe";
+export type KnownCommand = "lore" | (typeof commandRegistry)[number]["name"];
 
-export function describeCommand(command?: KnownCommand): object | undefined {
-  if (command === "describe") {
-    return commandRegistry[0];
-  }
-
+export function describeCommand(command?: string): object | undefined {
   if (command === "lore" || command === undefined) {
     return {
       ...rootCommand,
-      commands: commandRegistry,
+      commands: commandRegistry.map(materializeCommandDefinition),
     };
   }
 
-  return undefined;
+  const definition = commandRegistry.find((candidate) => candidate.name === command);
+  return definition === undefined ? undefined : materializeCommandDefinition(definition);
 }
 
 export interface Invocation {
@@ -115,6 +119,7 @@ export interface Invocation {
 
 export function inspectInvocation(arguments_: readonly string[]): Invocation {
   const positionals: string[] = [];
+  const suppliedOptions: OptionSpec[] = [];
   let help = false;
   let version = false;
 
@@ -134,64 +139,157 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
       continue;
     }
 
-    if (argument === "--log-level") {
-      const level = arguments_[index + 1];
-      if (level === undefined || !isLogLevel(level)) {
-        return invalidInvocation(positionals, help, version);
+    if (argument.startsWith("--")) {
+      const parsedOption = parseOption(argument, arguments_[index + 1]);
+      if (parsedOption === undefined) {
+        return invalidInvocation("unknown", help, version);
       }
-      index += 1;
-      continue;
-    }
-
-    if (argument.startsWith("--log-level=")) {
-      const level = argument.slice("--log-level=".length);
-      if (!isLogLevel(level)) return invalidInvocation(positionals, help, version);
+      if (parsedOption.consumeNext) {
+        index += 1;
+      }
+      suppliedOptions.push(parsedOption.option);
       continue;
     }
 
     if (argument.startsWith("-")) {
-      return invalidInvocation(positionals, help, version);
+      return invalidInvocation(commandFromPositionals(positionals), help, version);
     }
 
     positionals.push(argument);
   }
 
   if (help && version) {
-    return invalidInvocation(positionals, help, version);
+    return invalidInvocation(commandFromPositionals(positionals), help, version);
   }
 
-  if (positionals.length === 0) {
-    return { command: "lore", help, valid: true, version };
+  const command = commandFromPositionals(positionals);
+  if (command === "unknown") return invalidInvocation(command, help, version);
+
+  const definition = command === "lore" ? rootCommand : findCommand(command);
+  if (
+    definition === undefined ||
+    !hasValidPositionals(materializeCommandDefinition(definition), positionals.slice(1))
+  ) {
+    return invalidInvocation(command, help, version);
   }
 
-  if (positionals[0] !== "describe") {
-    return { command: "unknown", help, valid: false, version };
-  }
+  if (version && command !== "lore") return invalidInvocation(command, help, version);
+  if (!hasAllowedOptions(definition, suppliedOptions))
+    return invalidInvocation(command, help, version);
+  if (!help && !hasRequiredOptions(definition, suppliedOptions))
+    return invalidInvocation(command, help, version);
 
-  if (positionals.length > 2 || (positionals[1] !== undefined && positionals[1] !== "describe")) {
-    return { command: "describe", help, valid: false, version };
-  }
-
-  if (version) {
-    return { command: "describe", help, valid: false, version };
-  }
-
-  return { command: "describe", help, valid: true, version };
+  return { command, help, valid: true, version };
 }
 
 function invalidInvocation(
-  positionals: readonly string[],
+  command: KnownCommand | "unknown",
   help: boolean,
   version: boolean,
 ): Invocation {
   return {
-    command: positionals[0] === "describe" ? "describe" : "unknown",
+    command,
     help,
     valid: false,
     version,
   };
 }
 
-function isLogLevel(value: string): value is LogLevel {
-  return logLevels.includes(value as LogLevel);
+interface OptionSpec {
+  flag: string;
+  takesValue: boolean;
+  values?: readonly string[];
+}
+
+function commandFromPositionals(positionals: readonly string[]): KnownCommand | "unknown" {
+  if (positionals.length === 0) return "lore";
+  return findCommand(positionals[0]!)?.name ?? "unknown";
+}
+
+function findCommand(name: string): CommandDefinition | undefined {
+  return commandRegistry.find((candidate) => candidate.name === name);
+}
+
+function materializeCommandDefinition(definition: CommandDefinition): CommandDefinition {
+  if (definition.name !== "describe") return definition;
+
+  return {
+    ...definition,
+    positionals: definition.positionals.map((positional) =>
+      positional.name === "command"
+        ? { ...positional, values: commandRegistry.map((candidate) => candidate.name) }
+        : positional,
+    ),
+  };
+}
+
+function parseOption(
+  argument: string,
+  nextArgument: string | undefined,
+): { consumeNext: boolean; option: OptionSpec } | undefined {
+  const equalIndex = argument.indexOf("=");
+  const flag = equalIndex === -1 ? argument : argument.slice(0, equalIndex);
+  const option = allOptionSpecs().find((candidate) => candidate.flag === flag);
+  if (option === undefined) return undefined;
+
+  const value = equalIndex === -1 ? nextArgument : argument.slice(equalIndex + 1);
+  if (!option.takesValue) return equalIndex === -1 ? { consumeNext: false, option } : undefined;
+  if (value === undefined || value.startsWith("-") || !hasAllowedValue(option, value))
+    return undefined;
+
+  return { consumeNext: equalIndex === -1, option };
+}
+
+function hasValidPositionals(
+  definition: CommandDefinition,
+  positionals: readonly string[],
+): boolean {
+  if (positionals.length > definition.positionals.length) return false;
+
+  return definition.positionals.every((positional, index) => {
+    const value = positionals[index];
+    if (value === undefined) return !positional.required;
+    return positional.values === undefined || positional.values.includes(value);
+  });
+}
+
+function hasAllowedOptions(definition: CommandDefinition, options: readonly OptionSpec[]): boolean {
+  const allowed = new Set(
+    [...rootCommand.options, ...definition.options].map(toOptionSpec).map((x) => x.flag),
+  );
+  return options.every((option) => allowed.has(option.flag));
+}
+
+function hasRequiredOptions(
+  definition: CommandDefinition,
+  options: readonly OptionSpec[],
+): boolean {
+  const suppliedFlags = new Set(options.map((option) => option.flag));
+  return [...rootCommand.options, ...definition.options]
+    .filter((option) => option.required)
+    .map(toOptionSpec)
+    .every((option) => suppliedFlags.has(option.flag));
+}
+
+function allOptionSpecs(): OptionSpec[] {
+  const options = [
+    ...rootCommand.options,
+    ...commandRegistry.flatMap((definition) => definition.options),
+  ].map(toOptionSpec);
+  return options.filter(
+    (option, index) => options.findIndex((candidate) => candidate.flag === option.flag) === index,
+  );
+}
+
+function toOptionSpec(option: CommandOption): OptionSpec {
+  const [flag] = option.name.split(" ");
+  return {
+    flag: flag!,
+    takesValue: option.name.includes("<"),
+    ...(option.values === undefined ? {} : { values: option.values }),
+  };
+}
+
+function hasAllowedValue(option: OptionSpec, value: string): boolean {
+  return option.values === undefined || option.values.includes(value);
 }
