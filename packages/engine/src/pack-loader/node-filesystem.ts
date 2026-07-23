@@ -19,6 +19,11 @@ export function createNodePackFileSystem(): PackFileSystem {
       return entries.map((entry) => ({ kind: toKind(entry), name: entry.name }));
     },
     async readRegularFile(path, maxBytes) {
+      const pathMetadata = await lstat(path);
+      if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink() || pathMetadata.size > maxBytes) {
+        throw new Error("unreadable input");
+      }
+
       const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
         const metadata = await handle.stat();
