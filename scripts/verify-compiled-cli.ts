@@ -7,6 +7,8 @@ import goldenResponses from "../packages/cli/src/output/protocol.fixture.json";
 import { protocolResponseSchema } from "../packages/cli/src/output/protocol.js";
 import { validateProtocolSchema } from "../packages/cli/src/output/protocol-schema.js";
 
+const childTimeoutMs = 30_000;
+
 const [binary, expectedPlatform, expectedArchitecture] = process.argv.slice(2);
 if (binary === undefined || expectedPlatform === undefined || expectedArchitecture === undefined) {
   throw new Error("Usage: bun scripts/verify-compiled-cli.ts <binary> <platform> <architecture>");
@@ -46,6 +48,16 @@ try {
   assertSuccess(config);
   if (data(config).source !== "file" || asRecord(data(config).configuration).version !== 1) {
     throw new Error("Compiled binary did not load the explicit read-only configuration.");
+  }
+
+  const configPathResponse = await assertResponse(
+    [binary, "--config", configPath, "config", "path"],
+    0,
+    "config.path",
+  );
+  assertSuccess(configPathResponse);
+  if (data(configPathResponse).source !== "explicit" || data(configPathResponse).path !== configPath) {
+    throw new Error("Compiled binary did not report the explicit configuration path.");
   }
 
   const valid = await assertResponse([binary, "validate", packDirectory], 0, "validate");
@@ -143,10 +155,23 @@ function asArray(value: unknown): unknown[] {
 
 async function run(command: string[]) {
   const child = Bun.spawn({ cmd: command, stderr: "pipe", stdout: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([
+  const output = Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
-  return { exitCode, stderr, stdout };
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`Compiled CLI process exceeded ${childTimeoutMs}ms.`));
+    }, childTimeoutMs);
+  });
+
+  try {
+    const [stdout, stderr, exitCode] = await Promise.race([output, deadline]);
+    return { exitCode, stderr, stdout };
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
