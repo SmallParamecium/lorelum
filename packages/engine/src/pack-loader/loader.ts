@@ -31,12 +31,25 @@ export function createPackLoader(fileSystem: PackFileSystem): PackLoader {
 
 async function loadPack(fileSystem: PackFileSystem, packPath: string): Promise<PackInput> {
   const root = packPath;
-  await assertDirectory(fileSystem, root, "pack.path_invalid");
+  const rootDirectory = stableDirectory(
+    root,
+    await assertDirectory(fileSystem, root, "pack.path_invalid"),
+  );
 
-  const pack = await readYamlFile(fileSystem, root, "pack.yaml", maxPackBytes);
+  const pack = await readYamlFile(fileSystem, root, "pack.yaml", maxPackBytes, [rootDirectory]);
   const decisionsPath = join(root, "decisions.yaml");
-  const optionalDecisions = await readOptionalYamlFile(fileSystem, decisionsPath, maxDecisionBytes);
-  const practices = await loadPractices(fileSystem, root, optionalDecisions !== undefined);
+  const optionalDecisions = await readOptionalYamlFile(
+    fileSystem,
+    decisionsPath,
+    maxDecisionBytes,
+    [rootDirectory],
+  );
+  const practices = await loadPractices(
+    fileSystem,
+    root,
+    rootDirectory,
+    optionalDecisions !== undefined,
+  );
 
   return {
     pack: pack as Pack,
@@ -48,14 +61,19 @@ async function loadPack(fileSystem: PackFileSystem, packPath: string): Promise<P
 async function loadPractices(
   fileSystem: PackFileSystem,
   root: string,
+  rootDirectory: StableDirectory,
   hasDecisions: boolean,
 ): Promise<unknown[]> {
   const directory = join(root, "practices");
+  await assertStableDirectories(fileSystem, [rootDirectory]);
   const metadata = await lstat(fileSystem, directory);
+  await assertStableDirectories(fileSystem, [rootDirectory]);
   if (metadata.kind === "missing") return [];
   if (metadata.kind !== "directory") throw unreadable();
+  const practicesDirectory = stableDirectory(directory, metadata);
 
-  const entries = await readDirectory(fileSystem, directory);
+  const directories = [rootDirectory, practicesDirectory];
+  const entries = await readDirectory(fileSystem, directory, directories);
   const candidates = entries.filter((entry) => entry.name.endsWith(".md"));
   if (candidates.some((entry) => entry.kind !== "file")) throw unreadable();
   const markdown = candidates;
@@ -66,7 +84,12 @@ async function loadPractices(
   for (const entry of markdown.sort((left, right) => left.name.localeCompare(right.name))) {
     // Read sequentially so the aggregate limit is enforced before the next input opens.
     // eslint-disable-next-line no-await-in-loop
-    const content = await readFile(fileSystem, childPath(root, directory, entry.name), maxPracticeBytes);
+    const content = await readFile(
+      fileSystem,
+      childPath(root, directory, entry.name),
+      maxPracticeBytes,
+      directories,
+    );
     totalBytes += Buffer.byteLength(content);
     if (totalBytes > maxTotalBytes) throw unreadable();
     contents.push(content);
@@ -79,9 +102,10 @@ async function readYamlFile(
   root: string,
   name: "pack.yaml",
   maxBytes: number,
+  directories: readonly StableDirectory[],
 ): Promise<unknown> {
   const path = join(root, name);
-  const content = await readFile(fileSystem, path, maxBytes);
+  const content = await readFile(fileSystem, path, maxBytes, directories);
   return parseYaml(content);
 }
 
@@ -89,29 +113,38 @@ async function readOptionalYamlFile(
   fileSystem: PackFileSystem,
   path: string,
   maxBytes: number,
+  directories: readonly StableDirectory[],
 ): Promise<unknown | undefined> {
-  if ((await lstat(fileSystem, path)).kind === "missing") return undefined;
-  return parseYaml(await readFile(fileSystem, path, maxBytes));
+  await assertStableDirectories(fileSystem, directories);
+  const metadata = await lstat(fileSystem, path);
+  await assertStableDirectories(fileSystem, directories);
+  if (metadata.kind === "missing") return undefined;
+  return parseYaml(await readFile(fileSystem, path, maxBytes, directories));
 }
 
 async function assertDirectory(
   fileSystem: PackFileSystem,
   path: string,
   code: "pack.path_invalid",
-) {
+): Promise<PackFileMetadata> {
   const metadata = await lstat(fileSystem, path);
   if (metadata.kind !== "directory") {
     throw new PackLoadError(code, "The pack path must be a readable directory.");
   }
+  return metadata;
 }
 
 async function readFile(
   fileSystem: PackFileSystem,
   path: string,
   maxBytes: number,
+  directories: readonly StableDirectory[],
 ): Promise<string> {
+  await assertStableDirectories(fileSystem, directories);
   try {
-    return await fileSystem.readRegularFile(path, maxBytes);
+    const content = await fileSystem.readRegularFile(path, maxBytes);
+    await assertStableDirectories(fileSystem, directories);
+    return content;
   } catch {
     throw unreadable();
   }
@@ -125,12 +158,42 @@ async function lstat(fileSystem: PackFileSystem, path: string): Promise<PackFile
   }
 }
 
-async function readDirectory(fileSystem: PackFileSystem, path: string) {
+async function readDirectory(
+  fileSystem: PackFileSystem,
+  path: string,
+  directories: readonly StableDirectory[],
+) {
+  await assertStableDirectories(fileSystem, directories);
   try {
-    return await fileSystem.readDirectory(path);
+    const entries = await fileSystem.readDirectory(path);
+    await assertStableDirectories(fileSystem, directories);
+    return entries;
   } catch {
     throw unreadable();
   }
+}
+
+interface StableDirectory {
+  identity: string;
+  path: string;
+}
+
+function stableDirectory(path: string, metadata: PackFileMetadata): StableDirectory {
+  if (metadata.identity === undefined) throw unreadable();
+  return { identity: metadata.identity, path };
+}
+
+async function assertStableDirectories(
+  fileSystem: PackFileSystem,
+  directories: readonly StableDirectory[],
+): Promise<void> {
+  await Promise.all(
+    directories.map(async (directory) => {
+      const metadata = await lstat(fileSystem, directory.path);
+      if (metadata.kind !== "directory" || metadata.identity !== directory.identity)
+        throw unreadable();
+    }),
+  );
 }
 
 function childPath(root: string, directory: string, name: string): string {

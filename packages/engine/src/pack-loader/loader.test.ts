@@ -9,12 +9,17 @@ import type { PackDirectoryEntry, PackFileMetadata, PackFileSystem } from "./typ
 
 class MemoryFileSystem implements PackFileSystem {
   readonly directories = new Map<string, PackDirectoryEntry[]>();
+  readonly directoryIdentities = new Map<string, string>();
   readonly files = new Map<string, string>();
   readonly links = new Set<string>();
   readonly reads: string[] = [];
+  onRead: ((path: string) => void) | undefined;
+  #nextDirectoryIdentity = 0;
 
   addDirectory(path: string, entries: PackDirectoryEntry[] = []): void {
-    this.directories.set(resolve(path), entries);
+    const resolved = resolve(path);
+    this.directories.set(resolved, entries);
+    this.directoryIdentities.set(resolved, `directory-${++this.#nextDirectoryIdentity}`);
   }
 
   addFile(path: string, content: string): void {
@@ -23,11 +28,14 @@ class MemoryFileSystem implements PackFileSystem {
 
   async lstat(path: string): Promise<PackFileMetadata> {
     const resolved = resolve(path);
-    if (this.links.has(resolved)) return { kind: "symlink", size: 0 };
-    if (this.directories.has(resolved)) return { kind: "directory", size: 0 };
+    if (this.links.has(resolved)) return { identity: `link:${resolved}`, kind: "symlink", size: 0 };
+    if (this.directories.has(resolved)) {
+      return { identity: this.directoryIdentities.get(resolved), kind: "directory", size: 0 };
+    }
     const content = this.files.get(resolved);
-    if (content !== undefined) return { kind: "file", size: Buffer.byteLength(content) };
-    return { kind: "missing", size: 0 };
+    if (content !== undefined)
+      return { identity: `file:${resolved}`, kind: "file", size: Buffer.byteLength(content) };
+    return { identity: undefined, kind: "missing", size: 0 };
   }
 
   async readDirectory(path: string): Promise<readonly PackDirectoryEntry[]> {
@@ -39,6 +47,7 @@ class MemoryFileSystem implements PackFileSystem {
   async readRegularFile(path: string, maxBytes: number): Promise<string> {
     const resolved = resolve(path);
     this.reads.push(resolved);
+    this.onRead?.(resolved);
     if (this.links.has(resolved)) throw new Error("symlink");
     const content = this.files.get(resolved);
     if (content === undefined) throw new Error("missing");
@@ -121,6 +130,29 @@ test("rejects a non-regular Practice Markdown candidate", async () => {
   const { fileSystem, root } = validFileSystem();
   const practices = join(root, "practices");
   fileSystem.directories.set(practices, [{ kind: "symlink", name: "api.md" }]);
+
+  await expect(createPackLoader(fileSystem).load(root)).rejects.toMatchObject({
+    code: "pack.unreadable",
+  });
+});
+
+test("rejects a pack root replaced while an input is being read", async () => {
+  const { fileSystem, root } = validFileSystem();
+  fileSystem.onRead = (path) => {
+    if (path === join(root, "pack.yaml")) fileSystem.addDirectory(root);
+  };
+
+  await expect(createPackLoader(fileSystem).load(root)).rejects.toMatchObject({
+    code: "pack.unreadable",
+  });
+});
+
+test("rejects a practices directory replaced while a Practice is being read", async () => {
+  const { fileSystem, root } = validFileSystem();
+  const practices = join(root, "practices");
+  fileSystem.onRead = (path) => {
+    if (path === join(practices, "api.md")) fileSystem.addDirectory(practices);
+  };
 
   await expect(createPackLoader(fileSystem).load(root)).rejects.toMatchObject({
     code: "pack.unreadable",

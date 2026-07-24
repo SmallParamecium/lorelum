@@ -7,10 +7,17 @@ export function createNodePackFileSystem(): PackFileSystem {
   return {
     async lstat(path) {
       try {
-        const metadata = await lstat(path);
-        return { kind: toKind(metadata), size: metadata.size };
+        const metadata = await lstat(path, { bigint: true });
+        return {
+          identity: `${metadata.dev}:${metadata.ino}`,
+          kind: toKind(metadata),
+          size:
+            metadata.size > BigInt(Number.MAX_SAFE_INTEGER)
+              ? Number.POSITIVE_INFINITY
+              : Number(metadata.size),
+        };
       } catch (error) {
-        if (isMissingFile(error)) return { kind: "missing", size: 0 };
+        if (isMissingFile(error)) return { identity: undefined, kind: "missing", size: 0 };
         throw error;
       }
     },

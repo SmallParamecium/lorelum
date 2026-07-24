@@ -8,6 +8,8 @@ export interface PackDirectoryEntry {
 }
 
 export interface PackFileMetadata {
+  /** Opaque identity stable for the lifetime of an entry; undefined only when missing. */
+  identity: string | undefined;
   kind: PackEntryKind;
   size: number;
 }
