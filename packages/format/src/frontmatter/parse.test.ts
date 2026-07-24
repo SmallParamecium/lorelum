@@ -67,4 +67,39 @@ Guidance body.`;
       version: "0.1.0",
     });
   });
+
+  test("uses the same YAML 1.2 semantics for frontmatter and standalone documents", () => {
+    const source = "enabled: yes\nvalue: 0o17\n";
+    const markdown = `---\n${source}---\nbody`;
+
+    expect(parseYamlDocument(source)).toEqual(parseFrontmatter(markdown).data);
+    expect(parseYamlDocument(source)).toEqual({ enabled: "yes", value: 15 });
+  });
+
+  test("rejects duplicate keys", () => {
+    const source = "name: first\nname: second\n";
+
+    expect(() => parseYamlDocument(source)).toThrow();
+    expect(() => parseFrontmatter(`---\n${source}---\nbody`)).toThrow();
+  });
+
+  test("limits recursive alias expansion", () => {
+    const source = [
+      "level0: &level0 [value]",
+      ...Array.from(
+        { length: 8 },
+        (_, index) => `level${index + 1}: &level${index + 1} [*level${index}, *level${index}]`,
+      ),
+      "result: *level8",
+    ].join("\n");
+
+    expect(() => parseYamlDocument(source)).toThrow(/Excessive alias count/);
+  });
+
+  test("does not enable YAML 1.1 merge keys", () => {
+    expect(parseYamlDocument("base: &base { enabled: true }\nvalue: { <<: *base }\n")).toEqual({
+      base: { enabled: true },
+      value: { "<<": { enabled: true } },
+    });
+  });
 });

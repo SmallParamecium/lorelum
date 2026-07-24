@@ -1,4 +1,16 @@
 import matter from "gray-matter";
+import { parse } from "yaml";
+
+const yamlParseOptions = {
+  maxAliasCount: 100,
+  prettyErrors: false,
+  strict: true,
+  uniqueKeys: true,
+} as const;
+
+const yamlEngine = {
+  parse: (source: string): object => parseYamlDocument(source) as object,
+};
 
 /**
  * Result of parsing a markdown file with YAML frontmatter. Mirrors the two
@@ -15,27 +27,18 @@ export interface ParsedFrontmatter {
 /**
  * Parse a markdown string with `---` YAML frontmatter.
  *
- * Thin wrapper over gray-matter — this is the single swap point if we move
- * to `front-matter` (same API shape), per ADR 0002.
+ * gray-matter owns delimiter extraction only. YAML values are parsed by the
+ * same eemeli/yaml engine and limits as standalone pack documents.
  *
- * Malformed YAML propagates the underlying `YAMLException` — this wrapper
- * does not catch it. Callers (CLI/MCP) translate it into user-facing output.
+ * Malformed YAML propagates the parser error. Callers (CLI/MCP) translate it
+ * into user-facing output.
  */
 export function parseFrontmatter(markdown: string): ParsedFrontmatter {
-  const result = matter(markdown);
+  const result = matter(markdown, { engines: { yaml: yamlEngine } });
   return { data: result.data, content: result.content };
-}
-
-interface YamlEngine {
-  parse(source: string): unknown;
-}
-
-interface MatterWithEngines {
-  engines: { yaml: YamlEngine };
 }
 
 /** Parse a standalone YAML document using the same YAML engine as frontmatter. */
 export function parseYamlDocument(source: string): unknown {
-  const engine = (matter as unknown as MatterWithEngines).engines.yaml;
-  return engine.parse(source);
+  return parse(source, yamlParseOptions);
 }
