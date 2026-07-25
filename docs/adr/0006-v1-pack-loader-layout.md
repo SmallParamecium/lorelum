@@ -1,7 +1,7 @@
 # ADR 0006: Versioned v1 pack loader layout
 
 - **Date:** 2026-07-23
-- **Status:** Proposed
+- **Status:** Accepted
 - **Related:** ADR 0003, ADR 0004, issue #3
 
 ## Context
