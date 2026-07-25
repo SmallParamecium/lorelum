@@ -1,7 +1,7 @@
 # ADR 0005: Deterministic local CLI configuration
 
 - **Date:** 2026-07-23
-- **Status:** Proposed
+- **Status:** Accepted
 - **Related:** ADR 0004, issue #2
 
 ## Context
