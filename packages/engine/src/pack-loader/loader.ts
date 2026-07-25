@@ -1,11 +1,4 @@
-import {
-  parseFrontmatter,
-  parseYamlDocument,
-  type DecisionNode,
-  type Pack,
-  type PackInput,
-  type Practice,
-} from "@lorelum/format";
+import { parseFrontmatter, parseYamlDocument, type UnvalidatedPackInput } from "@lorelum/format";
 import { basename, join, relative, sep } from "node:path";
 
 import {
@@ -29,7 +22,10 @@ export function createPackLoader(fileSystem: PackFileSystem): PackLoader {
   return { load: (packPath) => loadPack(fileSystem, packPath) };
 }
 
-async function loadPack(fileSystem: PackFileSystem, packPath: string): Promise<PackInput> {
+async function loadPack(
+  fileSystem: PackFileSystem,
+  packPath: string,
+): Promise<UnvalidatedPackInput> {
   const root = packPath;
   const rootDirectory = stableDirectory(
     root,
@@ -52,9 +48,9 @@ async function loadPack(fileSystem: PackFileSystem, packPath: string): Promise<P
   );
 
   return {
-    pack: pack as Pack,
-    practices: practices as Practice[],
-    decisions: (optionalDecisions ?? []) as DecisionNode[],
+    pack,
+    practices,
+    decisions: optionalDecisions === undefined ? [] : optionalDecisions,
   };
 }
 

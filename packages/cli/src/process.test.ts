@@ -53,6 +53,45 @@ test("source and compiled binaries preserve the version protocol", async () => {
     });
     expect(valid.stderr).toBe("");
 
+    await writeFile(join(packDirectory, "decisions.yaml"), "id: process.entry\n");
+    const invalidDecisionsContainer = await runProcess([executable, "validate", packDirectory]);
+    expect(invalidDecisionsContainer.exitCode).toBe(1);
+    expect(JSON.parse(invalidDecisionsContainer.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: {
+        valid: false,
+        errors: [expect.objectContaining({ code: "format", path: "decisions" })],
+      },
+    });
+    expect(invalidDecisionsContainer.stderr).toBe("");
+
+    const lenientDecisionsContainer = await runProcess([
+      executable,
+      "validate",
+      packDirectory,
+      "--lenient",
+    ]);
+    expect(lenientDecisionsContainer.exitCode).toBe(0);
+    expect(JSON.parse(lenientDecisionsContainer.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: { valid: false, errors: [expect.objectContaining({ path: "decisions" })] },
+    });
+
+    await writeFile(join(packDirectory, "decisions.yaml"), "");
+    const emptyDecisions = await runProcess([executable, "validate", packDirectory]);
+    expect(emptyDecisions.exitCode).toBe(1);
+    expect(JSON.parse(emptyDecisions.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: {
+        valid: false,
+        errors: [expect.objectContaining({ code: "format", path: "decisions" })],
+      },
+    });
+    expect(emptyDecisions.stderr).toBe("");
+
     await writeFile(
       join(packDirectory, "decisions.yaml"),
       `- id: process.entry

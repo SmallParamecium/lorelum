@@ -1,4 +1,4 @@
-import type { PackInput } from "@lorelum/format";
+import type { UnvalidatedPackInput } from "@lorelum/format";
 
 export type PackEntryKind = "directory" | "file" | "missing" | "other" | "symlink";
 
@@ -22,7 +22,7 @@ export interface PackFileSystem {
 }
 
 export interface PackLoader {
-  load(packPath: string): Promise<PackInput>;
+  load(packPath: string): Promise<UnvalidatedPackInput>;
 }
 
 export class PackLoadError extends Error {

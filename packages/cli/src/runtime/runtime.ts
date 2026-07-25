@@ -5,7 +5,7 @@ import {
   type LoadedConfig,
 } from "./config.js";
 import { createNodePackFileSystem, createPackLoader, type PackLoader } from "@lorelum/engine";
-import type { PackInput } from "@lorelum/format";
+import type { UnvalidatedPackInput } from "@lorelum/format";
 import { resolve } from "node:path";
 import { Logger } from "./logger.js";
 import type { OutputWriter } from "../output/protocol.js";
@@ -15,7 +15,7 @@ export interface CliRuntime {
   readonly configSource: "default" | "environment" | "explicit";
   readonly logger: Logger;
   loadConfig(): Promise<LoadedConfig>;
-  loadPack(path: string): Promise<PackInput>;
+  loadPack(path: string): Promise<UnvalidatedPackInput>;
 }
 
 export interface RuntimeOptions extends ConfigEnvironment {

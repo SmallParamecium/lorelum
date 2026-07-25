@@ -51,6 +51,19 @@ describe("validatePack — format errors", () => {
     delete input.decisions[0]!.branches[0]!.recommend;
     const r = validatePack(input);
     expect(findCode(r, "errors", "format")).toBe(true);
+    expect(r.errors).toContainEqual(
+      expect.objectContaining({ path: "decisions[0].branches[0].recommend" }),
+    );
+  });
+
+  test("rejects non-array decision containers at the decisions root", () => {
+    for (const decisions of [{ id: "state.entry" }, "state.entry", null]) {
+      const r = validatePack({ ...reactPack(), decisions });
+      expect(r.valid).toBe(false);
+      expect(r.errors).toContainEqual(
+        expect.objectContaining({ code: "format", path: "decisions" }),
+      );
+    }
   });
 
   test("format errors short-circuit semantic checks (no duplicate-id noise)", () => {

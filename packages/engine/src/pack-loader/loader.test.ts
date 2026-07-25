@@ -191,6 +191,22 @@ test("normalizes malformed document parsing to a safe diagnostic", async () => {
   });
 });
 
+test("preserves an invalid decisions container for format validation", async () => {
+  const { fileSystem, root } = validFileSystem();
+  fileSystem.addFile(join(root, "decisions.yaml"), "id: test.entry\n");
+
+  const input = await createPackLoader(fileSystem).load(root);
+  expect(input.decisions).toEqual({ id: "test.entry" });
+});
+
+test("distinguishes an empty decisions document from a missing document", async () => {
+  const { fileSystem, root } = validFileSystem();
+  fileSystem.addFile(join(root, "decisions.yaml"), "");
+
+  const input = await createPackLoader(fileSystem).load(root);
+  expect(input.decisions).toBeNull();
+});
+
 test("reads ordinary inputs through the node filesystem adapter", async () => {
   const root = await mkdtemp(join(tmpdir(), "lorelum-pack-"));
   try {
