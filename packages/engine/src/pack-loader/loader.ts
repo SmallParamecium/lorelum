@@ -17,6 +17,8 @@ const maxPracticeBytes = 512 * 1024;
 /**
  * Loads the v1 directory layout described by ADR 0006. The loader only reads
  * explicitly named input files and delegates all semantic validation to format.
+ * Its stable-identity checks are defense in depth under ADR 0006's trusted-local
+ * threat model, not atomic isolation from hostile concurrent directory mutation.
  */
 export function createPackLoader(fileSystem: PackFileSystem): PackLoader {
   return { load: (packPath) => loadPack(fileSystem, packPath) };

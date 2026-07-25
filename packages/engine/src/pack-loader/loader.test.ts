@@ -136,7 +136,7 @@ test("rejects a non-regular Practice Markdown candidate", async () => {
   });
 });
 
-test("rejects a pack root replaced while an input is being read", async () => {
+test("detects a pack root replacement that persists across identity checks", async () => {
   const { fileSystem, root } = validFileSystem();
   fileSystem.onRead = (path) => {
     if (path === join(root, "pack.yaml")) fileSystem.addDirectory(root);
@@ -147,7 +147,7 @@ test("rejects a pack root replaced while an input is being read", async () => {
   });
 });
 
-test("rejects a practices directory replaced while a Practice is being read", async () => {
+test("detects a practices directory replacement that persists across identity checks", async () => {
   const { fileSystem, root } = validFileSystem();
   const practices = join(root, "practices");
   fileSystem.onRead = (path) => {

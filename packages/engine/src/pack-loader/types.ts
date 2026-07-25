@@ -14,7 +14,11 @@ export interface PackFileMetadata {
   size: number;
 }
 
-/** Injectable filesystem boundary for loading an explicitly selected pack. */
+/**
+ * Filesystem port for an explicitly selected, trusted local authoring or CI pack.
+ * It does not promise atomic isolation from hostile concurrent namespace changes;
+ * callers must satisfy the threat model in ADR 0006.
+ */
 export interface PackFileSystem {
   lstat(path: string): Promise<PackFileMetadata>;
   readDirectory(path: string): Promise<readonly PackDirectoryEntry[]>;

@@ -43,6 +43,34 @@ after a successful load. A valid report exits `0`; a report containing errors ex
 `1`, unless the local `--lenient` option changes only that exit code to `0`. Usage,
 path, read, parse, and unexpected failures emit failure envelopes and exit `2`.
 
+## Security model
+
+The v1 loader is designed for a pack author or CI job validating a local pack that
+the caller explicitly selected. During validation, the pack root, its `practices`
+directory, and their relevant parent directories must not be concurrently modified
+by an untrusted principal. The loader is not a capability boundary between callers
+with different filesystem privileges.
+
+Within that P1 threat model, the loader rejects symbolic links and special files
+visible at its checks, rejects static traversal outside the selected root, and
+detects a root or `practices` directory identity change that persists across its
+before-and-after checks. File-descriptor reads, `O_NOFOLLOW` where supported, and
+directory identity checks are defense in depth against accidental changes and
+ordinary malformed input.
+
+These checks do not provide kernel-enforced atomic isolation from a hostile process
+that can rename, replace, and restore a directory between checks. Therefore the v1
+loader must not be used with an elevated validator, a multi-tenant or shared-writable
+pack location, or any path crossing a trust boundary. Registry archives must also be
+extracted and validated in an isolated location before they can use this loader.
+
+If any of those use cases enters scope, a new issue and ADR must define a native
+directory-handle filesystem port. Its implementations must resolve every component
+relative to already-open directory handles, using facilities such as
+`openat`/`openat2` on POSIX and relative directory-handle opens on Windows. The
+current string-path port must not be presented as satisfying that stronger threat
+model.
+
 ## Consequences
 
 This yields reproducible author and CI validation, preserves a reusable loader port

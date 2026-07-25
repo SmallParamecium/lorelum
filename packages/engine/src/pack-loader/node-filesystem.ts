@@ -3,6 +3,11 @@ import { lstat, open, readdir } from "node:fs/promises";
 
 import type { PackFileSystem } from "./types.js";
 
+/**
+ * Node adapter for ADR 0006's trusted-local threat model. Descriptor stat and
+ * O_NOFOLLOW checks are defense in depth; callers must prevent untrusted concurrent
+ * mutation of the selected pack namespace.
+ */
 export function createNodePackFileSystem(): PackFileSystem {
   return {
     async lstat(path) {
