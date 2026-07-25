@@ -1,7 +1,7 @@
 # ADR 0004: Agent-first CLI protocol
 
 - **Date:** 2026-07-23
-- **Status:** Proposed
+- **Status:** Accepted
 - **Related:** ADR 0002 (Bun + TypeScript toolchain), issue #1
 
 ## Context
