@@ -24,11 +24,23 @@ The CLI exports a JSON Schema for this envelope; command definitions provide the
 for the contents of `data`.
 
 ```json
-{"protocolVersion":1,"toolVersion":"0.0.0","command":"describe","ok":true,"data":{"name":"lore"}}
+{
+  "protocolVersion": 1,
+  "toolVersion": "0.0.0",
+  "command": "describe",
+  "ok": true,
+  "data": { "name": "lore" }
+}
 ```
 
 ```json
-{"protocolVersion":1,"toolVersion":"0.0.0","command":"unknown","ok":false,"error":{"code":"usage.invalid","message":"The command invocation is invalid."}}
+{
+  "protocolVersion": 1,
+  "toolVersion": "0.0.0",
+  "command": "unknown",
+  "ok": false,
+  "error": { "code": "usage.invalid", "message": "The command invocation is invalid." }
+}
 ```
 
 `lore`, `--help`, and `describe [command]` are capability-discovery operations and use

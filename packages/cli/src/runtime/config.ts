@@ -162,7 +162,12 @@ function createNodeConfigFileSystem(): ConfigFileSystem {
           while (offset < content.length) {
             // Descriptor reads can be partial, so each read advances from the prior offset.
             // eslint-disable-next-line no-await-in-loop
-            const { bytesRead } = await handle.read(content, offset, content.length - offset, offset);
+            const { bytesRead } = await handle.read(
+              content,
+              offset,
+              content.length - offset,
+              offset,
+            );
             if (bytesRead === 0) break;
             offset += bytesRead;
           }

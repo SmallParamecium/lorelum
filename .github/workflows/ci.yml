@@ -41,11 +41,8 @@ jobs:
       - name: Test
         run: bun test
 
-      # oxfmt is still alpha (ADR 0002). Run as a non-blocking signal for now;
-      # promote to blocking once it stabilizes.
       - name: Format check
         run: bun run fmt:check
-        continue-on-error: true
 
   binary-fixtures:
     name: binary · ${{ matrix.platform }} · ${{ matrix.architecture }}

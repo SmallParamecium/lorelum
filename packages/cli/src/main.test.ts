@@ -31,7 +31,9 @@ test("returns machine-readable root capability discovery", async () => {
   });
   expect(
     JSON.parse(stdout.value).data.commands.map((command: { name: string }) => command.name),
-  ).toEqual(expect.arrayContaining(["describe", "config", "config.path", "config.show", "validate"]));
+  ).toEqual(
+    expect.arrayContaining(["describe", "config", "config.path", "config.show", "validate"]),
+  );
   expect(stderr.value).toBe("");
   expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
 });
