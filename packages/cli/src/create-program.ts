@@ -1,12 +1,11 @@
 import { Command, Option } from "commander";
 
 import type { OutputWriter } from "./output/protocol.js";
-import { commandRegistry, type CommandDefinition, rootCommand } from "./registry.js";
-import { Logger, logLevels, type LogLevel } from "./runtime/logger.js";
+import { commandRegistry, rootCommand, type CommandDefinition } from "./registry.js";
+import type { CliRuntime } from "./runtime/runtime.js";
+import type { LogLevel } from "./runtime/logger.js";
 
-export interface CliRuntime {
-  readonly logger: Logger;
-}
+export { type CliRuntime } from "./runtime/runtime.js";
 
 export function createProgram(runtime: CliRuntime, output: OutputWriter): Command {
   const program = new Command();
@@ -16,40 +15,72 @@ export function createProgram(runtime: CliRuntime, output: OutputWriter): Comman
     .description("Engineering knowledge tooling for AI coding agents.")
     .helpOption(false)
     .helpCommand(false)
-    .addOption(
-      new Option("--log-level <level>", "Set stderr log verbosity.")
-        .choices(logLevels)
-        .default("error"),
-    )
     .configureOutput({ writeErr: () => undefined, writeOut: () => undefined })
     .exitOverride()
     .hook("preAction", () => {
       runtime.logger.setLevel(program.opts<{ logLevel: LogLevel }>().logLevel);
     })
     .action(() => {
-      rootCommand.handler(output, { options: program.opts(), positionals: [] });
-    });
-
-  for (const definition of commandRegistry) {
-    const command = program.command(definition.usage).description(definition.summary);
-    for (const option of commandSpecificOptions(definition)) {
-      command.addOption(toCommanderOption(option));
-    }
-    command.action((...arguments_: unknown[]) => {
-      const commandInstance = arguments_.at(-1);
-      if (!(commandInstance instanceof Command)) {
-        throw new Error("Commander did not provide the command context.");
-      }
-      definition.handler(output, {
-        options: { ...program.opts(), ...commandInstance.opts() },
-        positionals: arguments_
-          .slice(0, -1)
-          .filter((argument): argument is string => typeof argument === "string"),
+      return rootCommand.handler(output, {
+        options: program.opts(),
+        positionals: [],
+        runtime,
       });
     });
+
+  for (const option of rootCommand.options) {
+    const commanderOption = toCommanderOption(option);
+    if (option.name.startsWith("--log-level")) commanderOption.default("error");
+    program.addOption(commanderOption);
+  }
+
+  for (const definition of commandRegistry) {
+    registerCommand(program, definition, runtime, output);
   }
 
   return program;
+}
+
+function registerCommand(
+  program: Command,
+  definition: CommandDefinition,
+  runtime: CliRuntime,
+  output: OutputWriter,
+): void {
+  let parent = program;
+  const segments = definition.name.split(".");
+  const usageSegments = definition.usage.split(" ");
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!;
+    const existing = parent.commands.find((command) => command.name() === segment);
+    if (existing !== undefined) {
+      parent = existing;
+      continue;
+    }
+
+    const usage = usageSegments.slice(index).join(" ");
+    const command = parent.command(usage).description(definition.summary);
+    if (index === segments.length - 1) {
+      for (const option of commandSpecificOptions(definition)) {
+        command.addOption(toCommanderOption(option));
+      }
+      command.action((...arguments_: unknown[]) => {
+        const commandInstance = arguments_.at(-1);
+        if (!(commandInstance instanceof Command)) {
+          throw new Error("Commander did not provide the command context.");
+        }
+        return definition.handler(output, {
+          options: { ...program.opts(), ...commandInstance.opts() },
+          positionals: arguments_
+            .slice(0, -1)
+            .filter((argument): argument is string => typeof argument === "string"),
+          runtime,
+        });
+      });
+    }
+    parent = command;
+  }
 }
 
 function commandSpecificOptions(definition: CommandDefinition) {

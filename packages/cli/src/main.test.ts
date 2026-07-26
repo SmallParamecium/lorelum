@@ -1,8 +1,12 @@
 import { expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { run } from "./main.js";
 import { protocolResponseSchema, toolVersion } from "./output/protocol.js";
 import { validateProtocolSchema } from "./output/protocol-schema.test-helper.js";
+import { createRuntime } from "./runtime/runtime.js";
 
 class MemoryWriter {
   value = "";
@@ -22,11 +26,11 @@ test("returns machine-readable root capability discovery", async () => {
     toolVersion,
     command: "describe",
     ok: true,
-    data: {
-      name: "lore",
-      commands: [{ name: "describe" }],
-    },
+    data: { name: "lore" },
   });
+  expect(
+    JSON.parse(stdout.value).data.commands.map((command: { name: string }) => command.name),
+  ).toEqual(expect.arrayContaining(["describe", "config", "config.path", "config.show"]));
   expect(stderr.value).toBe("");
   expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
 });
@@ -41,7 +45,7 @@ test("returns command metadata through describe", async () => {
     data: {
       name: "describe",
       resultSchema: { type: "object" },
-      errorCodes: ["usage.invalid", "runtime.unexpected"],
+      errorCodes: expect.arrayContaining(["usage.invalid", "runtime.unexpected"]),
       exitCodes: [0, 2],
     },
   });
@@ -101,4 +105,66 @@ test("validates invalid calls before help and version responses", async () => {
       expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
     }),
   );
+});
+
+test("reports deterministic local configuration paths and defaults", async () => {
+  const stdout = new MemoryWriter();
+  const runtime = createRuntime({
+    env: { XDG_CONFIG_HOME: "/home/agent/.config-root" },
+    homeDirectory: "/ignored",
+    platform: "linux",
+  });
+
+  expect(await run(["config", "path"], { runtime, stdout })).toBe(0);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "config.path",
+    ok: true,
+    data: { path: "/home/agent/.config-root/lorelum/config.json", source: "default" },
+  });
+
+  const show = new MemoryWriter();
+  const missingRuntime = createRuntime({
+    env: { LORELUM_CONFIG: "/tmp/lorelum-config-does-not-exist.json" },
+    platform: "linux",
+  });
+  expect(await run(["config", "show"], { runtime: missingRuntime, stdout: show })).toBe(2);
+  expect(JSON.parse(show.value)).toMatchObject({
+    command: "config.show",
+    ok: false,
+    error: { code: "config.unreadable" },
+  });
+});
+
+test("loads an explicitly selected configuration through the CLI boundary", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lorelum-cli-"));
+  const path = join(directory, "config.json");
+  await writeFile(path, '{"version":1}');
+  const stdout = new MemoryWriter();
+
+  try {
+    expect(await run([`--config=${path}`, "config", "show"], { stdout })).toBe(0);
+    expect(JSON.parse(stdout.value)).toMatchObject({
+      command: "config.show",
+      ok: true,
+      data: { configuration: { version: 1 }, source: "file" },
+    });
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
+test("rejects relative config overrides through the CLI boundary", async () => {
+  const stdout = new MemoryWriter();
+
+  expect(
+    await run(["--config=relative.json", "config", "path"], {
+      createRuntime: (options) => createRuntime({ ...options, platform: "linux" }),
+      stdout,
+    }),
+  ).toBe(2);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "config.path",
+    ok: false,
+    error: { code: "config.path_invalid" },
+  });
 });

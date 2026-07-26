@@ -14,20 +14,15 @@ class MemoryWriter {
 }
 
 test("describes registered commands from a single registry", () => {
-  expect(describeCommand()).toMatchObject({
-    name: "lore",
-    commands: [
-      {
-        name: "describe",
-        positionals: [{ name: "command", values: ["describe"] }],
-      },
-    ],
-  });
+  const description = describeCommand() as { commands: { name: string }[]; name: string };
+  expect(description.name).toBe("lore");
+  expect(description.commands.map((command) => command.name)).toEqual(
+    expect.arrayContaining(["describe", "config", "config.path", "config.show"]),
+  );
 });
 
 test("registers every command definition with an executable handler", () => {
   for (const command of commandRegistry) {
-    expect(command.usage).toContain(command.name);
     expect(command.handler).toBeInstanceOf(Function);
   }
 });
@@ -35,6 +30,7 @@ test("registers every command definition with an executable handler", () => {
 test("validates commands and global options before special responses", () => {
   expect(inspectInvocation(["describe", "--help"])).toEqual({
     command: "describe",
+    configPath: undefined,
     help: true,
     valid: true,
     version: false,
@@ -43,6 +39,14 @@ test("validates commands and global options before special responses", () => {
   expect(inspectInvocation(["--log-level", "--version"])).toMatchObject({ valid: false });
   expect(inspectInvocation(["--log-level=debug"])).toMatchObject({ valid: true });
   expect(inspectInvocation(["--log-level=verbose"])).toMatchObject({ valid: false });
+  expect(inspectInvocation(["--config=/tmp/config.json", "config", "path"])).toMatchObject({
+    command: "config.path",
+    configPath: "/tmp/config.json",
+    valid: true,
+  });
+  expect(describeCommand("config.show")).toMatchObject({
+    errorCodes: expect.arrayContaining(["config.unknown_field", "config.unsupported_version"]),
+  });
 });
 
 test("derives invocation validation, parser options, and describe metadata from registered commands", async () => {
@@ -84,7 +88,9 @@ test("derives invocation validation, parser options, and describe metadata from 
     });
     expect(describeCommand("future")).toMatchObject({ name: "future" });
     expect(describeCommand("describe")).toMatchObject({
-      positionals: [{ name: "command", values: ["describe", "future"] }],
+      positionals: [
+        { name: "command", values: expect.arrayContaining(["describe", "config", "future"]) },
+      ],
     });
 
     const stdout = new MemoryWriter();
