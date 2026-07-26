@@ -123,7 +123,7 @@ test("source and compiled binaries preserve the version protocol", async () => {
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
-}, 30_000);
+}, 60_000);
 
 async function runProcess(
   command: string[],

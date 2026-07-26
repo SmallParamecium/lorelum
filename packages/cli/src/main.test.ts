@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 
 import { run } from "./main.js";
 import { protocolResponseSchema, toolVersion } from "./output/protocol.js";
-import { validateProtocolSchema } from "./output/protocol-schema.test-helper.js";
+import { validateProtocolSchema } from "./output/protocol-schema.js";
 import { createRuntime } from "./runtime/runtime.js";
 import { PackLoadError, type PackLoader } from "@lorelum/engine";
 

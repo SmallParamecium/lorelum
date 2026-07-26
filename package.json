@@ -10,7 +10,8 @@
     "fmt": "oxfmt --write .",
     "fmt:check": "oxfmt --check .",
     "typecheck": "bun run --filter '*' typecheck",
-    "build:cli": "bun build --compile packages/cli/src/main.ts --outfile dist/lore"
+    "build:cli": "bun scripts/compile-cli.ts",
+    "verify:compiled-cli": "bun scripts/verify-compiled-cli.ts"
   },
   "devDependencies": {
     "@types/bun": "1.3.8",

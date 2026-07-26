@@ -50,9 +50,26 @@ bun install
 | Lint | `bun run lint` (oxlint) |
 | Format | `bun run fmt` (oxfmt) |
 | Typecheck | `bun run typecheck` (`tsc --noEmit`) |
+| Compile native CLI | `bun run build:cli` |
+| Verify compiled CLI | `bun run verify:compiled-cli <binary> <platform> <architecture>` |
 | Run any package script | `bun run <script>` |
 
 Precise scripts live in each `packages/*/package.json`.
+
+### Compiled CLI fixtures
+
+`bun run build:cli` writes `dist/lorelum-<version>-<platform>-<architecture>` (with
+`.exe` on Windows). The version comes from `packages/cli/package.json`, the same source
+used by the CLI protocol. Run the binary fixture using the printed path and the local
+`process.platform` / `process.arch`, for example `bun run verify:compiled-cli
+dist/lorelum-0.0.0-win32-x64.exe win32 x64`.
+
+CI runs the identical build and fixture scripts on Ubuntu 24.04 x64, macOS 14 arm64,
+and Windows 2022 x64. It uploads only temporary GitHub Actions artifacts for seven
+days. When a binary job fails, open the `binary · <platform> · <architecture>` job
+and inspect the `Verify runner identity`, `Compile native binary`, and `Verify
+compiled protocol fixtures` steps. The retained artifact also contains their
+`diagnostics/*.log` output; no release or registry is produced.
 
 ## Contributor License Agreement (CLA)
 
