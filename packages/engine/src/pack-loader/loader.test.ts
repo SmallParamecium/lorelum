@@ -116,6 +116,29 @@ test("loads only the versioned pack input layout from an explicit directory", as
   expect(fileSystem.reads).not.toContain(join(root, "ignored.txt"));
 });
 
+test("sorts Practice filenames by deterministic code-unit order", async () => {
+  const { fileSystem, root } = validFileSystem();
+  const practices = join(root, "practices");
+  fileSystem.directories.set(practices, [
+    { kind: "file", name: "ä.md" },
+    { kind: "file", name: "z.md" },
+  ]);
+  fileSystem.addFile(
+    join(practices, "ä.md"),
+    "---\nid: test.a-umlaut\ntitle: Umlaut\nstage: test\ntech_stack: [typescript]\napplies_when: testing deterministic order\n---\nGuidance.\n",
+  );
+  fileSystem.addFile(
+    join(practices, "z.md"),
+    "---\nid: test.z\ntitle: Zed\nstage: test\ntech_stack: [typescript]\napplies_when: testing deterministic order\n---\nGuidance.\n",
+  );
+
+  const input = await createPackLoader(fileSystem).load(root);
+  expect((input.practices as { id: string }[]).map((practice) => practice.id)).toEqual([
+    "test.z",
+    "test.a-umlaut",
+  ]);
+});
+
 test("rejects symlinked pack inputs without exposing the path or file contents", async () => {
   const { fileSystem, root } = validFileSystem();
   fileSystem.links.add(join(root, "pack.yaml"));

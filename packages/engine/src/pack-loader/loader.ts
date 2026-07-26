@@ -8,11 +8,16 @@ import {
   type PackLoader,
 } from "./types.js";
 
-const maxInputFiles = 128;
-const maxTotalBytes = 4 * 1024 * 1024;
-const maxPackBytes = 64 * 1024;
-const maxDecisionBytes = 256 * 1024;
-const maxPracticeBytes = 512 * 1024;
+export const v1PackInputLimits = {
+  maxDecisionBytes: 256 * 1024,
+  maxInputFiles: 128,
+  maxPackBytes: 64 * 1024,
+  maxPracticeBytes: 512 * 1024,
+  maxPracticeBytesTotal: 4 * 1024 * 1024,
+} as const;
+
+const { maxDecisionBytes, maxInputFiles, maxPackBytes, maxPracticeBytes, maxPracticeBytesTotal } =
+  v1PackInputLimits;
 
 /**
  * Loads the v1 directory layout described by ADR 0006. The loader only reads
@@ -79,7 +84,7 @@ async function loadPractices(
 
   let totalBytes = 0;
   const contents: string[] = [];
-  for (const entry of markdown.sort((left, right) => left.name.localeCompare(right.name))) {
+  for (const entry of markdown.sort((left, right) => compareEntryNames(left.name, right.name))) {
     // Read sequentially so the aggregate limit is enforced before the next input opens.
     // eslint-disable-next-line no-await-in-loop
     const content = await readFile(
@@ -89,10 +94,16 @@ async function loadPractices(
       directories,
     );
     totalBytes += Buffer.byteLength(content);
-    if (totalBytes > maxTotalBytes) throw unreadable();
+    if (totalBytes > maxPracticeBytesTotal) throw unreadable();
     contents.push(content);
   }
   return contents.map(parsePractice);
+}
+
+function compareEntryNames(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 async function readYamlFile(

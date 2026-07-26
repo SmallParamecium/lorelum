@@ -1,7 +1,9 @@
+import { v1PackInputLimits } from "@lorelum/engine";
 import { validatePack } from "@lorelum/format";
 
 import type { OutputWriter } from "./output/protocol.js";
 import { renderSuccess } from "./output/protocol.js";
+import type { JsonSchema } from "./output/protocol-schema.js";
 import type { CliRuntime } from "./runtime/runtime.js";
 import { CliError } from "./runtime/errors.js";
 import { logLevels } from "./runtime/logger.js";
@@ -15,7 +17,9 @@ export interface CommandOption {
 
 export interface PositionalArgument {
   name: string;
+  description: string;
   required: boolean;
+  constraints?: Readonly<Record<string, unknown>>;
   values?: readonly string[];
 }
 
@@ -66,6 +70,136 @@ const validateOptions: readonly CommandOption[] = [
   },
 ];
 
+const stringSchema: JsonSchema = { type: "string" };
+const validationIssueSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["level", "code", "path", "message"],
+  properties: {
+    level: { enum: ["error", "warning", "info"] },
+    code: stringSchema,
+    path: stringSchema,
+    message: stringSchema,
+  },
+};
+const validationReportSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["valid", "errors", "warnings", "infos"],
+  properties: {
+    valid: { type: "boolean" },
+    errors: { type: "array", items: validationIssueSchema },
+    warnings: { type: "array", items: validationIssueSchema },
+    infos: { type: "array", items: validationIssueSchema },
+  },
+};
+const configPathResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "source"],
+  properties: {
+    path: stringSchema,
+    source: { enum: ["default", "environment", "explicit"] },
+  },
+};
+const configShowResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["configuration", "source"],
+  properties: {
+    configuration: {
+      type: "object",
+      additionalProperties: false,
+      required: ["version"],
+      properties: { version: { const: 1 } },
+    },
+    source: { enum: ["default", "file"] },
+  },
+};
+const positionalDescriptionSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "description", "required"],
+  properties: {
+    name: stringSchema,
+    description: stringSchema,
+    required: { type: "boolean" },
+    constraints: { type: "object" },
+    values: { type: "array", items: stringSchema },
+  },
+};
+const optionDescriptionSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "description", "required"],
+  properties: {
+    name: stringSchema,
+    description: stringSchema,
+    required: { type: "boolean" },
+    values: { type: "array", items: stringSchema },
+  },
+};
+const commandCapabilityProperties: Readonly<Record<string, JsonSchema>> = {
+  usage: stringSchema,
+  name: stringSchema,
+  summary: stringSchema,
+  positionals: { type: "array", items: positionalDescriptionSchema },
+  options: { type: "array", items: optionDescriptionSchema },
+  resultSchema: { type: "object" },
+  errorCodes: { type: "array", items: stringSchema },
+  exitCodes: { type: "array", items: { type: "integer" } },
+};
+const commandCapabilityRequired = [
+  "usage",
+  "name",
+  "summary",
+  "positionals",
+  "options",
+  "resultSchema",
+  "errorCodes",
+  "exitCodes",
+] as const;
+const commandCapabilitySchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: commandCapabilityRequired,
+  properties: commandCapabilityProperties,
+};
+const rootCapabilitySchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [...commandCapabilityRequired, "commands"],
+  properties: {
+    ...commandCapabilityProperties,
+    commands: { type: "array", items: commandCapabilitySchema },
+  },
+};
+const discoveryResultSchema: JsonSchema = {
+  oneOf: [rootCapabilitySchema, commandCapabilitySchema],
+};
+
+const validatePackPathConstraints = {
+  kind: "directory",
+  layoutVersion: 1,
+  maxInputFiles: v1PackInputLimits.maxInputFiles,
+  maxPracticeBytesTotal: v1PackInputLimits.maxPracticeBytesTotal,
+  inputs: {
+    pack: { path: "pack.yaml", required: true, maxBytes: v1PackInputLimits.maxPackBytes },
+    decisions: {
+      path: "decisions.yaml",
+      required: false,
+      maxBytes: v1PackInputLimits.maxDecisionBytes,
+    },
+    practices: {
+      path: "practices/*.md",
+      required: false,
+      recursive: false,
+      maxBytesEach: v1PackInputLimits.maxPracticeBytes,
+    },
+  },
+  symlinks: "rejected",
+} as const;
+
 const configPathErrorCodes = [
   "usage.invalid",
   "runtime.unexpected",
@@ -77,9 +211,15 @@ export const commandRegistry: CommandDefinition[] = [
     usage: "describe [command]",
     name: "describe",
     summary: "Return machine-readable command capabilities.",
-    positionals: [{ name: "command", required: false }],
+    positionals: [
+      {
+        name: "command",
+        description: "Exact registered command id; omit it to describe the root command.",
+        required: false,
+      },
+    ],
     options: globalOptions,
-    resultSchema: { type: "object" },
+    resultSchema: discoveryResultSchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output, invocation) => {
@@ -96,7 +236,7 @@ export const commandRegistry: CommandDefinition[] = [
     summary: "Inspect read-only local CLI configuration.",
     positionals: [],
     options: globalOptions,
-    resultSchema: { type: "object" },
+    resultSchema: commandCapabilitySchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output) => renderSuccess(output, "describe", describeCommand("config")),
@@ -107,7 +247,7 @@ export const commandRegistry: CommandDefinition[] = [
     summary: "Return the resolved local configuration path and source.",
     positionals: [],
     options: globalOptions,
-    resultSchema: { type: "object", required: ["path", "source"] },
+    resultSchema: configPathResultSchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output, invocation) => {
@@ -123,7 +263,7 @@ export const commandRegistry: CommandDefinition[] = [
     summary: "Return validated local configuration and its source.",
     positionals: [],
     options: globalOptions,
-    resultSchema: { type: "object", required: ["configuration", "source"] },
+    resultSchema: configShowResultSchema,
     errorCodes: [
       ...configPathErrorCodes,
       "config.unreadable",
@@ -146,13 +286,22 @@ export const commandRegistry: CommandDefinition[] = [
     usage: "validate <pack-path>",
     name: "validate",
     summary: "Validate an explicitly selected v1 knowledge pack for authors and CI.",
-    positionals: [{ name: "pack-path", required: true }],
+    positionals: [
+      {
+        name: "pack-path",
+        description: "Explicit v1 pack directory. Relative paths resolve once at invocation time.",
+        required: true,
+        constraints: validatePackPathConstraints,
+      },
+    ],
     options: validateOptions,
-    resultSchema: {
-      type: "object",
-      required: ["valid", "errors", "warnings", "infos"],
-    },
-    errorCodes: ["usage.invalid", "pack.path_invalid", "pack.unreadable", "pack.parse_error"],
+    resultSchema: validationReportSchema,
+    errorCodes: [
+      ...configPathErrorCodes,
+      "pack.path_invalid",
+      "pack.unreadable",
+      "pack.parse_error",
+    ],
     exitCodes: [0, 1, 2],
     handler: async (output, invocation) => {
       const report = validatePack(await invocation.runtime.loadPack(invocation.positionals[0]!));
@@ -169,7 +318,7 @@ export const rootCommand: CommandDefinition = {
   summary: "Engineering knowledge tooling for AI coding agents.",
   positionals: [],
   options: globalOptions,
-  resultSchema: { type: "object", required: ["name", "summary", "commands"] },
+  resultSchema: rootCapabilitySchema,
   errorCodes: configPathErrorCodes,
   exitCodes: [0, 2],
   handler: (output) => renderSuccess(output, "describe", describeCommand()),

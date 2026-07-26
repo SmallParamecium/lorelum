@@ -5,7 +5,11 @@ import { join } from "node:path";
 import cliManifest from "../packages/cli/package.json";
 import goldenResponses from "../packages/cli/src/output/protocol.fixture.json";
 import { protocolResponseSchema } from "../packages/cli/src/output/protocol.js";
-import { validateProtocolSchema } from "../packages/cli/src/output/protocol-schema.js";
+import {
+  validateJsonSchema,
+  validateProtocolSchema,
+  type JsonSchema,
+} from "../packages/cli/src/output/protocol-schema.js";
 
 const childTimeoutMs = 30_000;
 
@@ -46,6 +50,14 @@ try {
   if (!Array.isArray(data(describe).exitCodes) || !data(describe).exitCodes.includes(1)) {
     throw new Error("Compiled binary does not describe validate's report exit code.");
   }
+  const validateErrorCodes = asArray(data(describe).errorCodes);
+  if (
+    !validateErrorCodes.includes("config.path_invalid") ||
+    !validateErrorCodes.includes("runtime.unexpected")
+  ) {
+    throw new Error("Compiled binary does not describe validate's runtime error boundary.");
+  }
+  const validateResultSchema = asRecord(data(describe).resultSchema) as JsonSchema;
 
   const config = await assertResponse(
     [binary, "--config", configPath, "config", "show"],
@@ -72,6 +84,7 @@ try {
 
   const valid = await assertResponse([binary, "validate", packDirectory], 0, "validate");
   assertSuccess(valid);
+  assertJsonSchema(data(valid), validateResultSchema, "valid validation report");
   if (data(valid).valid !== true) throw new Error("Compiled binary rejected a valid pack.");
 
   await writeFile(
@@ -80,6 +93,7 @@ try {
   );
   const invalidPack = await assertResponse([binary, "validate", packDirectory], 1, "validate");
   assertSuccess(invalidPack);
+  assertJsonSchema(data(invalidPack), validateResultSchema, "invalid validation report");
   if (
     data(invalidPack).valid !== false ||
     !asArray(data(invalidPack).errors).some((issue) => asRecord(issue).code === "dangling-ref")
@@ -93,6 +107,7 @@ try {
     "validate",
   );
   assertSuccess(lenient);
+  assertJsonSchema(data(lenient), validateResultSchema, "lenient validation report");
   if (data(lenient).valid !== false)
     throw new Error("Lenient validation changed the report content.");
 
@@ -159,6 +174,15 @@ function assertGoldenEnvelope(
 
 function assertSuccess(envelope: Record<string, unknown>): void {
   if (envelope.ok !== true) throw new Error("Compiled binary returned a failure envelope.");
+}
+
+function assertJsonSchema(value: unknown, schema: JsonSchema, fixture: string): void {
+  const errors = validateJsonSchema(value, schema);
+  if (errors.length > 0) {
+    throw new Error(
+      `Compiled binary ${fixture} violates its discovered schema: ${errors.join("; ")}`,
+    );
+  }
 }
 
 function data(envelope: Record<string, unknown>): Record<string, unknown> {
