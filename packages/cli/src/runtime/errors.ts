@@ -28,9 +28,7 @@ export function toCliError(error: unknown): CliError {
   return new CliError("runtime.unexpected", "The command could not be completed.");
 }
 
-function isPackLoadError(
-  error: unknown,
-): error is {
+function isPackLoadError(error: unknown): error is {
   code: "pack.parse_error" | "pack.path_invalid" | "pack.unreadable";
   message: string;
 } {

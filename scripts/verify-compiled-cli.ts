@@ -34,7 +34,10 @@ try {
   assertGoldenEnvelope(await assertResponse([binary], 0, "describe"), asRecord(describeGolden));
   const version = await assertResponse([binary, "--version"], 0, "version");
   assertSuccess(version);
-  if (version.toolVersion !== cliManifest.version || data(version).toolVersion !== cliManifest.version) {
+  if (
+    version.toolVersion !== cliManifest.version ||
+    data(version).toolVersion !== cliManifest.version
+  ) {
     throw new Error("Compiled binary tool version does not match CLI package metadata.");
   }
 
@@ -44,7 +47,11 @@ try {
     throw new Error("Compiled binary does not describe validate's report exit code.");
   }
 
-  const config = await assertResponse([binary, "--config", configPath, "config", "show"], 0, "config.show");
+  const config = await assertResponse(
+    [binary, "--config", configPath, "config", "show"],
+    0,
+    "config.show",
+  );
   assertSuccess(config);
   if (data(config).source !== "file" || asRecord(data(config).configuration).version !== 1) {
     throw new Error("Compiled binary did not load the explicit read-only configuration.");
@@ -56,7 +63,10 @@ try {
     "config.path",
   );
   assertSuccess(configPathResponse);
-  if (data(configPathResponse).source !== "explicit" || data(configPathResponse).path !== configPath) {
+  if (
+    data(configPathResponse).source !== "explicit" ||
+    data(configPathResponse).path !== configPath
+  ) {
     throw new Error("Compiled binary did not report the explicit configuration path.");
   }
 
@@ -77,9 +87,14 @@ try {
     throw new Error("Compiled binary did not return the expected validation report.");
   }
 
-  const lenient = await assertResponse([binary, "validate", packDirectory, "--lenient"], 0, "validate");
+  const lenient = await assertResponse(
+    [binary, "validate", packDirectory, "--lenient"],
+    0,
+    "validate",
+  );
   assertSuccess(lenient);
-  if (data(lenient).valid !== false) throw new Error("Lenient validation changed the report content.");
+  if (data(lenient).valid !== false)
+    throw new Error("Lenient validation changed the report content.");
 
   const invalid = await run([binary, "--private-token"]);
   if (invalid.exitCode !== 2 || invalid.stderr !== "" || invalid.stdout.includes("private-token")) {
@@ -104,7 +119,8 @@ async function assertResponse(
 
 function assertEnvelope(stdout: string, expectedCommand: string): Record<string, unknown> {
   const lines = stdout.trimEnd().split("\n");
-  if (lines.length !== 1) throw new Error("Compiled binary wrote more than one stdout protocol line.");
+  if (lines.length !== 1)
+    throw new Error("Compiled binary wrote more than one stdout protocol line.");
 
   let envelope: unknown;
   try {
@@ -114,21 +130,29 @@ function assertEnvelope(stdout: string, expectedCommand: string): Record<string,
   }
   const schemaErrors = validateProtocolSchema(envelope, protocolResponseSchema);
   if (schemaErrors.length > 0) {
-    throw new Error(`Compiled binary response violates protocol schema: ${schemaErrors.join("; ")}`);
+    throw new Error(
+      `Compiled binary response violates protocol schema: ${schemaErrors.join("; ")}`,
+    );
   }
 
   const record = asRecord(envelope);
-  if (record.command !== expectedCommand) throw new Error("Compiled binary response has an unexpected command.");
+  if (record.command !== expectedCommand)
+    throw new Error("Compiled binary response has an unexpected command.");
   if (record.toolVersion !== cliManifest.version) {
     throw new Error("Compiled binary response version does not match CLI package metadata.");
   }
   return record;
 }
 
-function assertGoldenEnvelope(envelope: Record<string, unknown>, golden: Record<string, unknown>): void {
+function assertGoldenEnvelope(
+  envelope: Record<string, unknown>,
+  golden: Record<string, unknown>,
+): void {
   for (const property of ["protocolVersion", "toolVersion", "command", "ok"]) {
     if (envelope[property] !== golden[property]) {
-      throw new Error(`Compiled binary response diverges from the ${String(property)} golden fixture.`);
+      throw new Error(
+        `Compiled binary response diverges from the ${String(property)} golden fixture.`,
+      );
     }
   }
 }
@@ -149,7 +173,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function asArray(value: unknown): unknown[] {
-  if (!Array.isArray(value)) throw new Error("Compiled binary response has an invalid array field.");
+  if (!Array.isArray(value))
+    throw new Error("Compiled binary response has an invalid array field.");
   return value;
 }
 

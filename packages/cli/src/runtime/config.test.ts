@@ -134,7 +134,11 @@ function memoryFileSystem(
   metadataContent: string,
   readContent: string = metadataContent,
 ): ConfigFileSystem {
-  const metadata = { identity: "memory:1", kind: "file" as const, size: Buffer.byteLength(metadataContent) };
+  const metadata = {
+    identity: "memory:1",
+    kind: "file" as const,
+    size: Buffer.byteLength(metadataContent),
+  };
   return {
     async lstat() {
       return metadata;
