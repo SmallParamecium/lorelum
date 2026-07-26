@@ -163,23 +163,23 @@ lore check src/features/auth/LoginPage.tsx
 lore learn "single-flight refresh token in the HTTP client"
 ```
 
-Or wire it into your AI tool via MCP — Lorelum ships an MCP server that any MCP-compatible agent (Cursor, Claude Code, Codex, Windsurf, ...) can call.
+From P3 onward, Lorelum is planned to expose an MCP server for MCP-compatible agents such as Cursor, Claude Code, Codex, and Windsurf.
 
 ## How it's different
 
-|                                   | `AGENTS.md` / `.cursorrules` | Skills / Slash commands | **Lorelum**               |
-| --------------------------------- | ---------------------------- | ----------------------- | ------------------------- |
-| **Delivery**                      | Static, all-at-once          | Manual trigger          | **Retrieved on demand**   |
-| **Decays over session**           | Yes                          | No (one-shot)           | No (fresh each query)     |
-| **Re-injection after compaction** | Manual: re-paste all rules   | Manual                  | ✅ Automatic, task-scoped |
-| **Scales to 100s of rules**       | ❌                           | Tedious                 | ✅ built for it           |
-| **Captures team decisions**       | No                           | No                      | ✅ `decisions.yaml`       |
-| **Tool-agnostic**                 | Tool-specific                | Tool-specific           | ✅ MCP / CLI / Skill      |
-| **Anti-pattern checks**           | No                           | No                      | ✅ `lore check`           |
+|                                   | `AGENTS.md` / `.cursorrules` | Skills / Slash commands | **Lorelum**                |
+| --------------------------------- | ---------------------------- | ----------------------- | -------------------------- |
+| **Delivery**                      | Static, all-at-once          | Manual trigger          | **Retrieved on demand**    |
+| **Decays over session**           | Yes                          | No (one-shot)           | No (fresh each query)      |
+| **Re-injection after compaction** | Manual: re-paste all rules   | Manual                  | ✅ Automatic, task-scoped  |
+| **Scales to 100s of rules**       | ❌                           | Tedious                 | ✅ built for it            |
+| **Captures team decisions**       | No                           | No                      | ✅ `decisions.yaml`        |
+| **Tool-agnostic**                 | Tool-specific                | Tool-specific           | Planned: MCP / CLI / Skill |
+| **Anti-pattern checks**           | No                           | No                      | Planned: `lore check`      |
 
 Lorelum isn't a better `.cursorrules`. It's the **retrieval + decision layer** that sits behind whatever AI tool you use.
 
-## Architecture (in brief)
+## Target Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -198,7 +198,7 @@ local packs        endpoint (team / SaaS / self-hosted)
 (offline)          (real-time, multi-user)
 ```
 
-Two modes share the same commands:
+The planned product has two modes:
 
 - **Local mode (default):** `lore install` a public pack, query offline. Zero ops. Like npm.
 - **Endpoint mode:** point the CLI at a team/SaaS/self-hosted endpoint for real-time, multi-user knowledge.
