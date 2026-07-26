@@ -39,9 +39,14 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
       ...(invocation.configPath === undefined ? {} : { explicitPath: invocation.configPath }),
     };
     const runtime = options.runtime ?? (options.createRuntime ?? createRuntime)(runtimeOptions);
-    const program = createProgram(runtime, stdout);
+    let commandExitCode: 0 | 1 = 0;
+    const program = createProgram(runtime, stdout, {
+      setExitCode: (exitCode) => {
+        commandExitCode = exitCode;
+      },
+    });
     await program.parseAsync(arguments_, { from: "user" });
-    return 0;
+    return commandExitCode;
   } catch (error) {
     const cliError = invocation.valid ? toCliError(error) : toUsageError();
     renderFailure(stdout, invocation.command, cliError.code, cliError.message);

@@ -17,11 +17,34 @@ export function toCliError(error: unknown): CliError {
     return error;
   }
 
+  if (isPackLoadError(error)) {
+    return new CliError(error.code, error.message);
+  }
+
   if (isCommanderError(error)) {
     return new CliError("usage.invalid", "The command invocation is invalid.");
   }
 
   return new CliError("runtime.unexpected", "The command could not be completed.");
+}
+
+function isPackLoadError(
+  error: unknown,
+): error is {
+  code: "pack.parse_error" | "pack.path_invalid" | "pack.unreadable";
+  message: string;
+} {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    typeof error.code === "string" &&
+    (error.code === "pack.parse_error" ||
+      error.code === "pack.path_invalid" ||
+      error.code === "pack.unreadable") &&
+    typeof error.message === "string"
+  );
 }
 
 function isCommanderError(error: unknown): error is { code: string } {

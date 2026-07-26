@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,6 +39,77 @@ test("source and compiled binaries preserve the version protocol", async () => {
     expect(discovery.exitCode).toBe(0);
     expect(JSON.parse(discovery.stdout)).toMatchObject({ command: "describe", ok: true });
     expect(discovery.stderr).toBe("");
+
+    const packDirectory = join(directory, "pack");
+    await mkdir(packDirectory);
+    await writeFile(join(packDirectory, "pack.yaml"), "name: process-pack\nversion: 1.0.0\n");
+
+    const valid = await runProcess([executable, "validate", packDirectory]);
+    expect(valid.exitCode).toBe(0);
+    expect(JSON.parse(valid.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: { valid: true },
+    });
+    expect(valid.stderr).toBe("");
+
+    await writeFile(join(packDirectory, "decisions.yaml"), "id: process.entry\n");
+    const invalidDecisionsContainer = await runProcess([executable, "validate", packDirectory]);
+    expect(invalidDecisionsContainer.exitCode).toBe(1);
+    expect(JSON.parse(invalidDecisionsContainer.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: {
+        valid: false,
+        errors: [expect.objectContaining({ code: "format", path: "decisions" })],
+      },
+    });
+    expect(invalidDecisionsContainer.stderr).toBe("");
+
+    const lenientDecisionsContainer = await runProcess([
+      executable,
+      "validate",
+      packDirectory,
+      "--lenient",
+    ]);
+    expect(lenientDecisionsContainer.exitCode).toBe(0);
+    expect(JSON.parse(lenientDecisionsContainer.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: { valid: false, errors: [expect.objectContaining({ path: "decisions" })] },
+    });
+
+    await writeFile(join(packDirectory, "decisions.yaml"), "");
+    const emptyDecisions = await runProcess([executable, "validate", packDirectory]);
+    expect(emptyDecisions.exitCode).toBe(1);
+    expect(JSON.parse(emptyDecisions.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: {
+        valid: false,
+        errors: [expect.objectContaining({ code: "format", path: "decisions" })],
+      },
+    });
+    expect(emptyDecisions.stderr).toBe("");
+
+    await writeFile(
+      join(packDirectory, "decisions.yaml"),
+      `- id: process.entry
+  question: What next?
+  branches:
+    - when: always
+      recommend: [process.missing]
+      reason: Exercise validation failure
+`,
+    );
+    const invalidPack = await runProcess([executable, "validate", packDirectory]);
+    expect(invalidPack.exitCode).toBe(1);
+    expect(JSON.parse(invalidPack.stdout)).toMatchObject({
+      command: "validate",
+      ok: true,
+      data: { valid: false, errors: [expect.objectContaining({ code: "dangling-ref" })] },
+    });
+    expect(invalidPack.stderr).toBe("");
 
     const invalid = await runProcess([executable, "--private-token"]);
     expect(invalid.exitCode).toBe(2);

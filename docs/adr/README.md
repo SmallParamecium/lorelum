@@ -26,7 +26,8 @@ docs/adr/
 ├── 0003-practice-pack-format.md               # Practice/pack format & validation semantics
 ├── 0004-agent-first-cli-protocol.md            # candidate CLI protocol contract
 ├── 0005-deterministic-local-cli-config.md       # local config resolution contract
-├── 0006-...                                   # subsequent decisions
+├── 0006-v1-pack-loader-layout.md                # v1 pack filesystem input contract
+├── 0007-...                                   # subsequent decisions
 └── 0000-template.md                           # copy this to start a new ADR
 ```
 

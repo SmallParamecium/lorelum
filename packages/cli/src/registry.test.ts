@@ -17,7 +17,7 @@ test("describes registered commands from a single registry", () => {
   const description = describeCommand() as { commands: { name: string }[]; name: string };
   expect(description.name).toBe("lore");
   expect(description.commands.map((command) => command.name)).toEqual(
-    expect.arrayContaining(["describe", "config", "config.path", "config.show"]),
+    expect.arrayContaining(["describe", "config", "config.path", "config.show", "validate"]),
   );
 });
 
@@ -39,6 +39,11 @@ test("validates commands and global options before special responses", () => {
   expect(inspectInvocation(["--log-level", "--version"])).toMatchObject({ valid: false });
   expect(inspectInvocation(["--log-level=debug"])).toMatchObject({ valid: true });
   expect(inspectInvocation(["--log-level=verbose"])).toMatchObject({ valid: false });
+  expect(inspectInvocation(["validate", "pack", "--lenient"])).toMatchObject({
+    command: "validate",
+    valid: true,
+  });
+  expect(inspectInvocation(["config", "show", "--lenient"])).toMatchObject({ valid: false });
   expect(inspectInvocation(["--config=/tmp/config.json", "config", "path"])).toMatchObject({
     command: "config.path",
     configPath: "/tmp/config.json",
