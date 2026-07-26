@@ -71,27 +71,40 @@ const validateOptions: readonly CommandOption[] = [
 ];
 
 const stringSchema: JsonSchema = { type: "string" };
-const validationIssueSchema: JsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["level", "code", "path", "message"],
-  properties: {
-    level: { enum: ["error", "warning", "info"] },
-    code: stringSchema,
-    path: stringSchema,
-    message: stringSchema,
-  },
-};
-const validationReportSchema: JsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["valid", "errors", "warnings", "infos"],
-  properties: {
-    valid: { type: "boolean" },
-    errors: { type: "array", items: validationIssueSchema },
-    warnings: { type: "array", items: validationIssueSchema },
-    infos: { type: "array", items: validationIssueSchema },
-  },
+function validationIssueSchema(level: "error" | "warning" | "info"): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["level", "code", "path", "message"],
+    properties: {
+      level: { const: level },
+      code: stringSchema,
+      path: stringSchema,
+      message: stringSchema,
+    },
+  };
+}
+
+function validationReportSchema(valid: boolean): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["valid", "errors", "warnings", "infos"],
+    properties: {
+      valid: { const: valid },
+      errors: {
+        type: "array",
+        ...(valid ? { maxItems: 0 } : { minItems: 1 }),
+        items: validationIssueSchema("error"),
+      },
+      warnings: { type: "array", items: validationIssueSchema("warning") },
+      infos: { type: "array", items: validationIssueSchema("info") },
+    },
+  };
+}
+
+const validationReportResultSchema: JsonSchema = {
+  oneOf: [validationReportSchema(true), validationReportSchema(false)],
 };
 const configPathResultSchema: JsonSchema = {
   type: "object",
@@ -198,6 +211,11 @@ const validatePackPathConstraints = {
     },
   },
   symlinks: "rejected",
+  securityModel: {
+    threatModel: "trusted-local",
+    capabilityBoundary: false,
+    concurrentUntrustedMutation: "unsupported",
+  },
 } as const;
 
 const configPathErrorCodes = [
@@ -295,7 +313,7 @@ export const commandRegistry: CommandDefinition[] = [
       },
     ],
     options: validateOptions,
-    resultSchema: validationReportSchema,
+    resultSchema: validationReportResultSchema,
     errorCodes: [
       ...configPathErrorCodes,
       "pack.path_invalid",

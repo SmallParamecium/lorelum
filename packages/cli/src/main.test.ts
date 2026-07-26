@@ -211,20 +211,16 @@ test("describes validate as a public command with its report contract", async ()
               },
             },
             symlinks: "rejected",
+            securityModel: {
+              threatModel: "trusted-local",
+              capabilityBoundary: false,
+              concurrentUntrustedMutation: "unsupported",
+            },
           },
         },
       ],
       options: expect.arrayContaining([expect.objectContaining({ name: "--lenient" })]),
-      resultSchema: {
-        additionalProperties: false,
-        required: ["valid", "errors", "warnings", "infos"],
-        properties: {
-          valid: { type: "boolean" },
-          errors: { type: "array" },
-          warnings: { type: "array" },
-          infos: { type: "array" },
-        },
-      },
+      resultSchema: { oneOf: expect.any(Array) },
       errorCodes: expect.arrayContaining([
         "config.path_invalid",
         "runtime.unexpected",
@@ -269,6 +265,17 @@ test("returns validation reports on stdout and uses exit 1 only for invalid load
   const resultSchema = (describeCommand("validate") as { resultSchema: JsonSchema }).resultSchema;
   expect(validateJsonSchema(report, resultSchema)).toEqual([]);
   expect(validateJsonSchema({ ...report, errors: "invalid" }, resultSchema)).not.toEqual([]);
+  expect(
+    validateJsonSchema(
+      {
+        ...report,
+        errors: report.errors.map((issue: { level: string }) => ({ ...issue, level: "warning" })),
+      },
+      resultSchema,
+    ),
+  ).not.toEqual([]);
+  expect(validateJsonSchema({ ...report, valid: true }, resultSchema)).not.toEqual([]);
+  expect(validateJsonSchema({ ...report, valid: false, errors: [] }, resultSchema)).not.toEqual([]);
 });
 
 test("keeps report content but permits local lenient validation", async () => {

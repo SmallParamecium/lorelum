@@ -57,6 +57,15 @@ try {
   ) {
     throw new Error("Compiled binary does not describe validate's runtime error boundary.");
   }
+  const packPath = asRecord(asArray(data(describe).positionals)[0]);
+  const securityModel = asRecord(asRecord(packPath.constraints).securityModel);
+  if (
+    securityModel.threatModel !== "trusted-local" ||
+    securityModel.capabilityBoundary !== false ||
+    securityModel.concurrentUntrustedMutation !== "unsupported"
+  ) {
+    throw new Error("Compiled binary does not describe validate's trusted-local boundary.");
+  }
   const validateResultSchema = asRecord(data(describe).resultSchema) as JsonSchema;
 
   const config = await assertResponse(

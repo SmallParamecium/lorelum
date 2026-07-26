@@ -5,6 +5,8 @@ export type JsonSchema = {
   enum?: readonly unknown[];
   additionalProperties?: boolean;
   required?: readonly string[];
+  minItems?: number;
+  maxItems?: number;
   items?: JsonSchema;
   properties?: Readonly<Record<string, JsonSchema>>;
 };
@@ -60,8 +62,19 @@ function validate(value: unknown, schema: JsonSchema, path: string): string[] {
 
   if (schema.type === "array") {
     if (!Array.isArray(value)) return [`${path} must be an array`];
-    if (schema.items === undefined) return [];
-    return value.flatMap((item, index) => validate(item, schema.items!, `${path}[${index}]`));
+    const errors: string[] = [];
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      errors.push(`${path} must contain at least ${schema.minItems} item(s)`);
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      errors.push(`${path} must contain at most ${schema.maxItems} item(s)`);
+    }
+    if (schema.items !== undefined) {
+      errors.push(
+        ...value.flatMap((item, index) => validate(item, schema.items!, `${path}[${index}]`)),
+      );
+    }
+    return errors;
   }
 
   if (schema.type !== "object") return [];
