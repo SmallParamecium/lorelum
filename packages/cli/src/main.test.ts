@@ -5,7 +5,12 @@ import { join, resolve } from "node:path";
 
 import { run } from "./main.js";
 import { protocolResponseSchema, toolVersion } from "./output/protocol.js";
-import { validateProtocolSchema } from "./output/protocol-schema.js";
+import {
+  validateJsonSchema,
+  validateProtocolSchema,
+  type JsonSchema,
+} from "./output/protocol-schema.js";
+import { describeCommand } from "./registry.js";
 import { createRuntime } from "./runtime/runtime.js";
 import { PackLoadError, type PackLoader } from "@lorelum/engine";
 
@@ -36,6 +41,8 @@ test("returns machine-readable root capability discovery", async () => {
   );
   expect(stderr.value).toBe("");
   expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
+  const rootSchema = (describeCommand("lore") as { resultSchema: JsonSchema }).resultSchema;
+  expect(validateJsonSchema(JSON.parse(stdout.value).data, rootSchema)).toEqual([]);
 });
 
 test("returns command metadata through describe", async () => {
@@ -47,12 +54,15 @@ test("returns command metadata through describe", async () => {
     ok: true,
     data: {
       name: "describe",
-      resultSchema: { type: "object" },
+      resultSchema: { oneOf: expect.any(Array) },
       errorCodes: expect.arrayContaining(["usage.invalid", "runtime.unexpected"]),
       exitCodes: [0, 2],
     },
   });
   expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
+  const discoverySchema = (describeCommand("describe") as { resultSchema: JsonSchema })
+    .resultSchema;
+  expect(validateJsonSchema(JSON.parse(stdout.value).data, discoverySchema)).toEqual([]);
 });
 
 test("returns structured help and version responses", async () => {
@@ -181,10 +191,41 @@ test("describes validate as a public command with its report contract", async ()
     ok: true,
     data: {
       name: "validate",
-      positionals: [{ name: "pack-path", required: true }],
+      positionals: [
+        {
+          name: "pack-path",
+          required: true,
+          constraints: {
+            kind: "directory",
+            layoutVersion: 1,
+            maxInputFiles: 128,
+            maxPracticeBytesTotal: 4 * 1024 * 1024,
+            inputs: {
+              pack: { path: "pack.yaml", required: true, maxBytes: 64 * 1024 },
+              decisions: { path: "decisions.yaml", required: false, maxBytes: 256 * 1024 },
+              practices: {
+                path: "practices/*.md",
+                required: false,
+                recursive: false,
+                maxBytesEach: 512 * 1024,
+              },
+            },
+            symlinks: "rejected",
+            securityModel: {
+              threatModel: "trusted-local",
+              capabilityBoundary: false,
+              concurrentUntrustedMutation: "unsupported",
+            },
+          },
+        },
+      ],
       options: expect.arrayContaining([expect.objectContaining({ name: "--lenient" })]),
-      resultSchema: { required: ["valid", "errors", "warnings", "infos"] },
-      errorCodes: expect.arrayContaining(["pack.parse_error"]),
+      resultSchema: { oneOf: expect.any(Array) },
+      errorCodes: expect.arrayContaining([
+        "config.path_invalid",
+        "runtime.unexpected",
+        "pack.parse_error",
+      ]),
       exitCodes: [0, 1, 2],
     },
   });
@@ -220,6 +261,21 @@ test("returns validation reports on stdout and uses exit 1 only for invalid load
     ok: true,
     data: { valid: false, errors: [expect.objectContaining({ code: "dangling-ref" })] },
   });
+  const report = JSON.parse(stdout.value).data;
+  const resultSchema = (describeCommand("validate") as { resultSchema: JsonSchema }).resultSchema;
+  expect(validateJsonSchema(report, resultSchema)).toEqual([]);
+  expect(validateJsonSchema({ ...report, errors: "invalid" }, resultSchema)).not.toEqual([]);
+  expect(
+    validateJsonSchema(
+      {
+        ...report,
+        errors: report.errors.map((issue: { level: string }) => ({ ...issue, level: "warning" })),
+      },
+      resultSchema,
+    ),
+  ).not.toEqual([]);
+  expect(validateJsonSchema({ ...report, valid: true }, resultSchema)).not.toEqual([]);
+  expect(validateJsonSchema({ ...report, valid: false, errors: [] }, resultSchema)).not.toEqual([]);
 });
 
 test("keeps report content but permits local lenient validation", async () => {
@@ -264,6 +320,26 @@ test("normalizes pack loader failures to a failure envelope", async () => {
     ok: false,
     error: { code: "pack.parse_error", message: "A pack document could not be parsed." },
   });
+});
+
+test("advertises the unexpected runtime error that validate can return", async () => {
+  const stdout = new MemoryWriter();
+  const runtime = runtimeForPack({
+    async load() {
+      throw new Error("internal detail");
+    },
+  });
+
+  expect(await run(["validate", "ignored"], { runtime, stdout })).toBe(2);
+  const response = JSON.parse(stdout.value);
+  expect(response).toMatchObject({
+    command: "validate",
+    ok: false,
+    error: { code: "runtime.unexpected", message: "The command could not be completed." },
+  });
+  expect((describeCommand("validate") as { errorCodes: string[] }).errorCodes).toContain(
+    response.error.code,
+  );
 });
 
 test("resolves a relative pack path at the CLI runtime boundary", async () => {

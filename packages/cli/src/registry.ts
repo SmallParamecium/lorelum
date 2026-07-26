@@ -1,7 +1,9 @@
+import { v1PackInputLimits } from "@lorelum/engine";
 import { validatePack } from "@lorelum/format";
 
 import type { OutputWriter } from "./output/protocol.js";
 import { renderSuccess } from "./output/protocol.js";
+import type { JsonSchema } from "./output/protocol-schema.js";
 import type { CliRuntime } from "./runtime/runtime.js";
 import { CliError } from "./runtime/errors.js";
 import { logLevels } from "./runtime/logger.js";
@@ -15,7 +17,9 @@ export interface CommandOption {
 
 export interface PositionalArgument {
   name: string;
+  description: string;
   required: boolean;
+  constraints?: Readonly<Record<string, unknown>>;
   values?: readonly string[];
 }
 
@@ -66,6 +70,154 @@ const validateOptions: readonly CommandOption[] = [
   },
 ];
 
+const stringSchema: JsonSchema = { type: "string" };
+function validationIssueSchema(level: "error" | "warning" | "info"): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["level", "code", "path", "message"],
+    properties: {
+      level: { const: level },
+      code: stringSchema,
+      path: stringSchema,
+      message: stringSchema,
+    },
+  };
+}
+
+function validationReportSchema(valid: boolean): JsonSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["valid", "errors", "warnings", "infos"],
+    properties: {
+      valid: { const: valid },
+      errors: {
+        type: "array",
+        ...(valid ? { maxItems: 0 } : { minItems: 1 }),
+        items: validationIssueSchema("error"),
+      },
+      warnings: { type: "array", items: validationIssueSchema("warning") },
+      infos: { type: "array", items: validationIssueSchema("info") },
+    },
+  };
+}
+
+const validationReportResultSchema: JsonSchema = {
+  oneOf: [validationReportSchema(true), validationReportSchema(false)],
+};
+const configPathResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "source"],
+  properties: {
+    path: stringSchema,
+    source: { enum: ["default", "environment", "explicit"] },
+  },
+};
+const configShowResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["configuration", "source"],
+  properties: {
+    configuration: {
+      type: "object",
+      additionalProperties: false,
+      required: ["version"],
+      properties: { version: { const: 1 } },
+    },
+    source: { enum: ["default", "file"] },
+  },
+};
+const positionalDescriptionSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "description", "required"],
+  properties: {
+    name: stringSchema,
+    description: stringSchema,
+    required: { type: "boolean" },
+    constraints: { type: "object" },
+    values: { type: "array", items: stringSchema },
+  },
+};
+const optionDescriptionSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "description", "required"],
+  properties: {
+    name: stringSchema,
+    description: stringSchema,
+    required: { type: "boolean" },
+    values: { type: "array", items: stringSchema },
+  },
+};
+const commandCapabilityProperties: Readonly<Record<string, JsonSchema>> = {
+  usage: stringSchema,
+  name: stringSchema,
+  summary: stringSchema,
+  positionals: { type: "array", items: positionalDescriptionSchema },
+  options: { type: "array", items: optionDescriptionSchema },
+  resultSchema: { type: "object" },
+  errorCodes: { type: "array", items: stringSchema },
+  exitCodes: { type: "array", items: { type: "integer" } },
+};
+const commandCapabilityRequired = [
+  "usage",
+  "name",
+  "summary",
+  "positionals",
+  "options",
+  "resultSchema",
+  "errorCodes",
+  "exitCodes",
+] as const;
+const commandCapabilitySchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: commandCapabilityRequired,
+  properties: commandCapabilityProperties,
+};
+const rootCapabilitySchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [...commandCapabilityRequired, "commands"],
+  properties: {
+    ...commandCapabilityProperties,
+    commands: { type: "array", items: commandCapabilitySchema },
+  },
+};
+const discoveryResultSchema: JsonSchema = {
+  oneOf: [rootCapabilitySchema, commandCapabilitySchema],
+};
+
+const validatePackPathConstraints = {
+  kind: "directory",
+  layoutVersion: 1,
+  maxInputFiles: v1PackInputLimits.maxInputFiles,
+  maxPracticeBytesTotal: v1PackInputLimits.maxPracticeBytesTotal,
+  inputs: {
+    pack: { path: "pack.yaml", required: true, maxBytes: v1PackInputLimits.maxPackBytes },
+    decisions: {
+      path: "decisions.yaml",
+      required: false,
+      maxBytes: v1PackInputLimits.maxDecisionBytes,
+    },
+    practices: {
+      path: "practices/*.md",
+      required: false,
+      recursive: false,
+      maxBytesEach: v1PackInputLimits.maxPracticeBytes,
+    },
+  },
+  symlinks: "rejected",
+  securityModel: {
+    threatModel: "trusted-local",
+    capabilityBoundary: false,
+    concurrentUntrustedMutation: "unsupported",
+  },
+} as const;
+
 const configPathErrorCodes = [
   "usage.invalid",
   "runtime.unexpected",
@@ -77,9 +229,15 @@ export const commandRegistry: CommandDefinition[] = [
     usage: "describe [command]",
     name: "describe",
     summary: "Return machine-readable command capabilities.",
-    positionals: [{ name: "command", required: false }],
+    positionals: [
+      {
+        name: "command",
+        description: "Exact registered command id; omit it to describe the root command.",
+        required: false,
+      },
+    ],
     options: globalOptions,
-    resultSchema: { type: "object" },
+    resultSchema: discoveryResultSchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output, invocation) => {
@@ -96,7 +254,7 @@ export const commandRegistry: CommandDefinition[] = [
     summary: "Inspect read-only local CLI configuration.",
     positionals: [],
     options: globalOptions,
-    resultSchema: { type: "object" },
+    resultSchema: commandCapabilitySchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output) => renderSuccess(output, "describe", describeCommand("config")),
@@ -107,7 +265,7 @@ export const commandRegistry: CommandDefinition[] = [
     summary: "Return the resolved local configuration path and source.",
     positionals: [],
     options: globalOptions,
-    resultSchema: { type: "object", required: ["path", "source"] },
+    resultSchema: configPathResultSchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output, invocation) => {
@@ -123,7 +281,7 @@ export const commandRegistry: CommandDefinition[] = [
     summary: "Return validated local configuration and its source.",
     positionals: [],
     options: globalOptions,
-    resultSchema: { type: "object", required: ["configuration", "source"] },
+    resultSchema: configShowResultSchema,
     errorCodes: [
       ...configPathErrorCodes,
       "config.unreadable",
@@ -146,13 +304,22 @@ export const commandRegistry: CommandDefinition[] = [
     usage: "validate <pack-path>",
     name: "validate",
     summary: "Validate an explicitly selected v1 knowledge pack for authors and CI.",
-    positionals: [{ name: "pack-path", required: true }],
+    positionals: [
+      {
+        name: "pack-path",
+        description: "Explicit v1 pack directory. Relative paths resolve once at invocation time.",
+        required: true,
+        constraints: validatePackPathConstraints,
+      },
+    ],
     options: validateOptions,
-    resultSchema: {
-      type: "object",
-      required: ["valid", "errors", "warnings", "infos"],
-    },
-    errorCodes: ["usage.invalid", "pack.path_invalid", "pack.unreadable", "pack.parse_error"],
+    resultSchema: validationReportResultSchema,
+    errorCodes: [
+      ...configPathErrorCodes,
+      "pack.path_invalid",
+      "pack.unreadable",
+      "pack.parse_error",
+    ],
     exitCodes: [0, 1, 2],
     handler: async (output, invocation) => {
       const report = validatePack(await invocation.runtime.loadPack(invocation.positionals[0]!));
@@ -169,7 +336,7 @@ export const rootCommand: CommandDefinition = {
   summary: "Engineering knowledge tooling for AI coding agents.",
   positionals: [],
   options: globalOptions,
-  resultSchema: { type: "object", required: ["name", "summary", "commands"] },
+  resultSchema: rootCapabilitySchema,
   errorCodes: configPathErrorCodes,
   exitCodes: [0, 2],
   handler: (output) => renderSuccess(output, "describe", describeCommand()),
@@ -180,7 +347,7 @@ export type KnownCommand = "lore" | (typeof commandRegistry)[number]["name"];
 export function describeCommand(command?: string): object | undefined {
   if (command === "lore" || command === undefined) {
     return {
-      ...rootCommand,
+      ...materializeCommandDefinition(rootCommand),
       commands: commandRegistry.map(materializeCommandDefinition),
     };
   }
@@ -300,16 +467,32 @@ function findCommand(name: string): CommandDefinition | undefined {
   return commandRegistry.find((candidate) => candidate.name === name);
 }
 
-function materializeCommandDefinition(definition: CommandDefinition): CommandDefinition {
-  if (definition.name !== "describe") return definition;
+type CommandDescription = Omit<CommandDefinition, "handler">;
 
+function materializeCommandDefinition(definition: CommandDefinition): CommandDescription {
+  const positionals = definition.positionals.map((positional) => ({
+    ...positional,
+    ...(positional.values === undefined ? {} : { values: [...positional.values] }),
+  }));
+  if (definition.name === "describe") {
+    for (const positional of positionals) {
+      if (positional.name === "command") {
+        positional.values = commandRegistry.map((candidate) => candidate.name);
+      }
+    }
+  }
   return {
-    ...definition,
-    positionals: definition.positionals.map((positional) =>
-      positional.name === "command"
-        ? { ...positional, values: commandRegistry.map((candidate) => candidate.name) }
-        : positional,
-    ),
+    usage: definition.usage,
+    name: definition.name,
+    summary: definition.summary,
+    positionals,
+    options: definition.options.map((option) => ({
+      ...option,
+      ...(option.values === undefined ? {} : { values: [...option.values] }),
+    })),
+    resultSchema: definition.resultSchema,
+    errorCodes: [...definition.errorCodes],
+    exitCodes: [...definition.exitCodes],
   };
 }
 
@@ -336,7 +519,7 @@ function configPathFrom(options: readonly ParsedOption[]): string | undefined {
 }
 
 function hasValidPositionals(
-  definition: CommandDefinition,
+  definition: Pick<CommandDefinition, "positionals">,
   positionals: readonly string[],
 ): boolean {
   if (positionals.length > definition.positionals.length) return false;

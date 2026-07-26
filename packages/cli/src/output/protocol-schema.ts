@@ -1,18 +1,27 @@
-type Schema = {
-  oneOf?: readonly Schema[];
-  type?: "object" | "string";
+export type JsonSchema = {
+  oneOf?: readonly JsonSchema[];
+  type?: "array" | "boolean" | "integer" | "number" | "object" | "string";
   const?: unknown;
+  enum?: readonly unknown[];
   additionalProperties?: boolean;
   required?: readonly string[];
-  properties?: Readonly<Record<string, Schema>>;
+  minItems?: number;
+  maxItems?: number;
+  items?: JsonSchema;
+  properties?: Readonly<Record<string, JsonSchema>>;
 };
 
 /** Validates the JSON Schema vocabulary used by the v1 protocol contract. */
-export function validateProtocolSchema(value: unknown, schema: Schema): string[] {
+export function validateProtocolSchema(value: unknown, schema: JsonSchema): string[] {
+  return validateJsonSchema(value, schema);
+}
+
+/** Validate a command result or protocol envelope against the supported JSON Schema subset. */
+export function validateJsonSchema(value: unknown, schema: JsonSchema): string[] {
   return validate(value, schema, "response");
 }
 
-function validate(value: unknown, schema: Schema, path: string): string[] {
+function validate(value: unknown, schema: JsonSchema, path: string): string[] {
   if (schema.oneOf !== undefined) {
     const results = schema.oneOf.map((candidate) => validate(value, candidate, path));
     const matchingSchemas = results.filter((errors) => errors.length === 0);
@@ -25,8 +34,47 @@ function validate(value: unknown, schema: Schema, path: string): string[] {
     return [`${path} must equal ${JSON.stringify(schema.const)}`];
   }
 
+  if (schema.enum !== undefined && !schema.enum.some((candidate) => Object.is(value, candidate))) {
+    return [
+      `${path} must be one of ${schema.enum.map((candidate) => JSON.stringify(candidate)).join(", ")}`,
+    ];
+  }
+
   if (schema.type === "string") {
     return typeof value === "string" ? [] : [`${path} must be a string`];
+  }
+
+  if (schema.type === "boolean") {
+    return typeof value === "boolean" ? [] : [`${path} must be a boolean`];
+  }
+
+  if (schema.type === "number") {
+    return typeof value === "number" && Number.isFinite(value)
+      ? []
+      : [`${path} must be a finite number`];
+  }
+
+  if (schema.type === "integer") {
+    return typeof value === "number" && Number.isInteger(value)
+      ? []
+      : [`${path} must be an integer`];
+  }
+
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return [`${path} must be an array`];
+    const errors: string[] = [];
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      errors.push(`${path} must contain at least ${schema.minItems} item(s)`);
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      errors.push(`${path} must contain at most ${schema.maxItems} item(s)`);
+    }
+    if (schema.items !== undefined) {
+      errors.push(
+        ...value.flatMap((item, index) => validate(item, schema.items!, `${path}[${index}]`)),
+      );
+    }
+    return errors;
   }
 
   if (schema.type !== "object") return [];
