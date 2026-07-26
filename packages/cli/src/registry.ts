@@ -329,7 +329,7 @@ export type KnownCommand = "lore" | (typeof commandRegistry)[number]["name"];
 export function describeCommand(command?: string): object | undefined {
   if (command === "lore" || command === undefined) {
     return {
-      ...rootCommand,
+      ...materializeCommandDefinition(rootCommand),
       commands: commandRegistry.map(materializeCommandDefinition),
     };
   }
@@ -449,16 +449,32 @@ function findCommand(name: string): CommandDefinition | undefined {
   return commandRegistry.find((candidate) => candidate.name === name);
 }
 
-function materializeCommandDefinition(definition: CommandDefinition): CommandDefinition {
-  if (definition.name !== "describe") return definition;
+type CommandDescription = Omit<CommandDefinition, "handler">;
 
+function materializeCommandDefinition(definition: CommandDefinition): CommandDescription {
+  const positionals = definition.positionals.map((positional) => ({
+    ...positional,
+    ...(positional.values === undefined ? {} : { values: [...positional.values] }),
+  }));
+  if (definition.name === "describe") {
+    for (const positional of positionals) {
+      if (positional.name === "command") {
+        positional.values = commandRegistry.map((candidate) => candidate.name);
+      }
+    }
+  }
   return {
-    ...definition,
-    positionals: definition.positionals.map((positional) =>
-      positional.name === "command"
-        ? { ...positional, values: commandRegistry.map((candidate) => candidate.name) }
-        : positional,
-    ),
+    usage: definition.usage,
+    name: definition.name,
+    summary: definition.summary,
+    positionals,
+    options: definition.options.map((option) => ({
+      ...option,
+      ...(option.values === undefined ? {} : { values: [...option.values] }),
+    })),
+    resultSchema: definition.resultSchema,
+    errorCodes: [...definition.errorCodes],
+    exitCodes: [...definition.exitCodes],
   };
 }
 
@@ -485,7 +501,7 @@ function configPathFrom(options: readonly ParsedOption[]): string | undefined {
 }
 
 function hasValidPositionals(
-  definition: CommandDefinition,
+  definition: Pick<CommandDefinition, "positionals">,
   positionals: readonly string[],
 ): boolean {
   if (positionals.length > definition.positionals.length) return false;

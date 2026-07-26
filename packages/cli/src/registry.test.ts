@@ -14,11 +14,16 @@ class MemoryWriter {
 }
 
 test("describes registered commands from a single registry", () => {
-  const description = describeCommand() as { commands: { name: string }[]; name: string };
+  const description = describeCommand() as {
+    commands: { errorCodes: string[]; name: string }[];
+    name: string;
+  };
   expect(description.name).toBe("lore");
   expect(description.commands.map((command) => command.name)).toEqual(
     expect.arrayContaining(["describe", "config", "config.path", "config.show", "validate"]),
   );
+  expect(description.commands.every((command) => Array.isArray(command.errorCodes))).toBe(true);
+  expect(Object.hasOwn(description, "handler")).toBe(false);
 });
 
 test("registers every command definition with an executable handler", () => {
