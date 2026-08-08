@@ -14,6 +14,10 @@ describe("fixtures are self-validating", () => {
     expect(r.infos).toEqual([]);
   });
 
+  test("reactPack uses the v1 structured decision condition", () => {
+    expect(reactPack().decisions[0]?.branches[0]?.when).toBe('state.client == "heavy"');
+  });
+
   test("layeredDesignPractice passes validatePractice", () => {
     expect(validatePractice(layeredDesignPractice)).toEqual([]);
   });
