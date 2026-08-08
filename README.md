@@ -154,7 +154,7 @@ lore install react-fullstack
 lore query "settings page with permission guard, form, and tests"
 
 # Get a decision recommendation based on project context
-lore decide "React SPA, medium client state, RBAC routes, component tests"
+lore decide ./react-fullstack --decision state.client-vs-server --context '{"state":{"client":"heavy"}}'
 
 # Check if your code violates any practice
 lore check src/features/auth/LoginPage.tsx
@@ -209,7 +209,7 @@ We're building in the open, in milestones:
 
 - **P0–P2** — Core engine: Practice format, retrieval (embed + metadata), `lore query` / `get` / `decide` / `check`. Local mode only.
 - **P3–P4** — First public pack (`react-fullstack`), MCP server, `lore install` / `search`, public registry MVP.
-- **P5** — Endpoint kernel (AGPL, self-hostable), team packs, decision graph evaluator.
+- **P5** — Endpoint kernel (AGPL, self-hostable), team packs, hosted decision service.
 - **P6** — Enterprise governance (SSO, audit, sensitive-info scanning).
 
 See [Discussions](https://github.com/lorelum/lorelum/discussions) for what's being worked on right now.

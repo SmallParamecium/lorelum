@@ -153,7 +153,7 @@ lore install react-fullstack
 lore query "带权限控制、表单、测试的设置页"
 
 # 根据项目上下文，给出技术决策建议
-lore decide "React SPA，中等复杂度客户端状态，RBAC 路由，组件测试"
+lore decide ./react-fullstack --decision state.client-vs-server --context '{"state":{"client":"heavy"}}'
 
 # 检查代码是否违反了某条 Practice
 lore check src/features/auth/LoginPage.tsx
@@ -208,7 +208,7 @@ Lorelum 不是"更好的 .cursorrules"，而是位于你所用 AI 工具背后�
 
 - **P0–P2** — 核心引擎：Practice 格式、检索（语义 + 元数据）、`lore query` / `get` / `decide` / `check`。仅本地模式。
 - **P3–P4** — 第一个公开包（`react-fullstack`）、MCP Server、`lore install` / `search`、公开 Registry MVP。
-- **P5** — 端点服务内核（AGPL，可自托管）、团队知识包、决策图谱执行器。
+- **P5** — 端点服务内核（AGPL，可自托管）、团队知识包、托管决策服务。
 - **P6** — 企业治理（SSO、审计、敏感信息扫描）。
 
 当前进展见 [Discussions](https://github.com/lorelum/lorelum/discussions)。

@@ -17,6 +17,7 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const invocation = inspectInvocation(arguments_);
+  const human = invocation.human;
 
   try {
     if (!invocation.valid) {
@@ -25,12 +26,12 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
 
     if (invocation.help) {
       const command = invocation.command === "unknown" ? undefined : invocation.command;
-      renderSuccess(stdout, "describe", describeCommand(command));
+      renderSuccess(stdout, "describe", describeCommand(command), human);
       return 0;
     }
 
     if (invocation.version) {
-      renderSuccess(stdout, "version", { protocolVersion: 1, toolVersion });
+      renderSuccess(stdout, "version", { protocolVersion: 1, toolVersion }, human);
       return 0;
     }
 
@@ -49,7 +50,7 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
     return commandExitCode;
   } catch (error) {
     const cliError = invocation.valid ? toCliError(error) : toUsageError();
-    renderFailure(stdout, invocation.command, cliError.code, cliError.message);
+    renderFailure(stdout, invocation.command, cliError.code, cliError.message, human);
     return cliError.exitCode;
   }
 }

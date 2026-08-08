@@ -64,7 +64,17 @@ export const protocolResponseSchema = {
   ],
 } as const;
 
-export function renderSuccess<T>(writer: OutputWriter, command: string, data: T): void {
+export function renderSuccess<T>(
+  writer: OutputWriter,
+  command: string,
+  data: T,
+  human = false,
+): void {
+  if (human) {
+    writer.write(`${JSON.stringify(data, null, 2)}\n`);
+    return;
+  }
+
   const response: ProtocolSuccess<T> = {
     protocolVersion,
     toolVersion,
@@ -80,7 +90,13 @@ export function renderFailure(
   command: string,
   code: string,
   message: string,
+  human = false,
 ): void {
+  if (human) {
+    writer.write(`Error: ${message}\n`);
+    return;
+  }
+
   const response: ProtocolFailure = {
     protocolVersion,
     toolVersion,

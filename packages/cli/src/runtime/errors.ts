@@ -1,3 +1,6 @@
+import { DecisionEvaluationError } from "@lorelum/engine";
+import { DecisionDocumentError } from "@lorelum/format";
+
 export class CliError extends Error {
   readonly exitCode: 1 | 2;
 
@@ -19,6 +22,15 @@ export function toCliError(error: unknown): CliError {
 
   if (isPackLoadError(error)) {
     return new CliError(error.code, error.message);
+  }
+
+  if (error instanceof DecisionEvaluationError) {
+    return new CliError(error.code, error.message);
+  }
+
+  // The format layer only reports structural errors; the CLI maps them to public pack error codes here.
+  if (error instanceof DecisionDocumentError) {
+    return new CliError("pack.parse_error", error.message);
   }
 
   if (isCommanderError(error)) {

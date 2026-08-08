@@ -1,5 +1,5 @@
-import { v1PackInputLimits } from "@lorelum/engine";
-import { validatePack } from "@lorelum/format";
+import { evaluateDecisions, v1PackInputLimits } from "@lorelum/engine";
+import { parseDecisionDocument, validatePack } from "@lorelum/format";
 
 import type { OutputWriter } from "./output/protocol.js";
 import { renderSuccess } from "./output/protocol.js";
@@ -59,6 +59,11 @@ const globalOptions: readonly CommandOption[] = [
     required: false,
     values: logLevels,
   },
+  {
+    name: "--human",
+    description: "Render a human-readable result instead of the JSON envelope.",
+    required: false,
+  },
 ];
 
 const validateOptions: readonly CommandOption[] = [
@@ -67,6 +72,19 @@ const validateOptions: readonly CommandOption[] = [
     name: "--lenient",
     description: "Keep exit code 0 when the loaded pack has validation errors.",
     required: false,
+  },
+];
+const decideOptions: readonly CommandOption[] = [
+  ...globalOptions,
+  {
+    name: "--decision <id>",
+    description: "Decision node id at which evaluation starts.",
+    required: true,
+  },
+  {
+    name: "--context <json>",
+    description: "Structured JSON object used to evaluate conditions.",
+    required: true,
   },
 ];
 
@@ -105,6 +123,53 @@ function validationReportSchema(valid: boolean): JsonSchema {
 
 const validationReportResultSchema: JsonSchema = {
   oneOf: [validationReportSchema(true), validationReportSchema(false)],
+};
+const decisionTraceSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["decisionId", "question", "matchedWhen", "nextDecision"],
+  properties: {
+    decisionId: stringSchema,
+    question: stringSchema,
+    matchedWhen: { oneOf: [stringSchema, { const: null }] },
+    nextDecision: { oneOf: [stringSchema, { const: null }] },
+  },
+};
+const decisionRecommendationSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["practiceId", "reasons"],
+  properties: {
+    practiceId: stringSchema,
+    reasons: { type: "array", items: stringSchema },
+  },
+};
+const decisionResultSchema: JsonSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "entryDecision", "recommendations", "trace"],
+      properties: {
+        status: { const: "matched" },
+        entryDecision: stringSchema,
+        recommendations: { type: "array", items: decisionRecommendationSchema },
+        trace: { type: "array", items: decisionTraceSchema },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "entryDecision", "recommendations", "trace", "noMatchReason"],
+      properties: {
+        status: { const: "no_match" },
+        entryDecision: stringSchema,
+        recommendations: { type: "array", maxItems: 0 },
+        trace: { type: "array", items: decisionTraceSchema },
+        noMatchReason: stringSchema,
+      },
+    },
+  ],
 };
 const configPathResultSchema: JsonSchema = {
   type: "object",
@@ -245,7 +310,7 @@ export const commandRegistry: CommandDefinition[] = [
       if (description === undefined) {
         throw new CliError("usage.invalid", "The command invocation is invalid.");
       }
-      renderSuccess(output, "describe", description);
+      renderCommandSuccess(output, invocation, "describe", description);
     },
   },
   {
@@ -257,7 +322,8 @@ export const commandRegistry: CommandDefinition[] = [
     resultSchema: commandCapabilitySchema,
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
-    handler: (output) => renderSuccess(output, "describe", describeCommand("config")),
+    handler: (output, invocation) =>
+      renderCommandSuccess(output, invocation, "describe", describeCommand("config")),
   },
   {
     usage: "config path",
@@ -269,7 +335,7 @@ export const commandRegistry: CommandDefinition[] = [
     errorCodes: configPathErrorCodes,
     exitCodes: [0, 2],
     handler: (output, invocation) => {
-      renderSuccess(output, "config.path", {
+      renderCommandSuccess(output, invocation, "config.path", {
         path: invocation.runtime.configPath,
         source: invocation.runtime.configSource,
       });
@@ -294,7 +360,7 @@ export const commandRegistry: CommandDefinition[] = [
     handler: async (output, invocation) => {
       const loaded = await invocation.runtime.loadConfig();
       invocation.runtime.logger.log("info", "Loaded local CLI configuration.");
-      renderSuccess(output, "config.show", {
+      renderCommandSuccess(output, invocation, "config.show", {
         configuration: loaded.configuration,
         source: loaded.source,
       });
@@ -324,8 +390,48 @@ export const commandRegistry: CommandDefinition[] = [
     handler: async (output, invocation) => {
       const report = validatePack(await invocation.runtime.loadPack(invocation.positionals[0]!));
       invocation.runtime.logger.log("info", "Validated explicit knowledge pack input.");
-      renderSuccess(output, "validate", report);
+      renderCommandSuccess(output, invocation, "validate", report);
       if (!report.valid && invocation.options.lenient !== true) invocation.setExitCode?.(1);
+    },
+  },
+  {
+    usage: "decide <pack-path>",
+    name: "decide",
+    summary: "Evaluate a local knowledge pack decision tree for a structured context.",
+    positionals: [
+      {
+        name: "pack-path",
+        description: "Explicit v1 pack directory. Relative paths resolve once at invocation time.",
+        required: true,
+        constraints: validatePackPathConstraints,
+      },
+    ],
+    options: decideOptions,
+    resultSchema: decisionResultSchema,
+    errorCodes: [
+      ...configPathErrorCodes,
+      "pack.path_invalid",
+      "pack.unreadable",
+      "pack.parse_error",
+      "decide.unknown_decision",
+      "decide.invalid_condition",
+      "decide.duplicate_decision",
+      "decide.cycle",
+    ],
+    exitCodes: [0, 2],
+    handler: async (output, invocation) => {
+      const entryDecision = requiredStringOption(invocation.options, "decision");
+      const context = parseDecisionContext(requiredStringOption(invocation.options, "context"));
+      // Document parsing is owned by the format layer; the CLI only maps protocol boundaries and error codes.
+      const loadedDecisions = (await invocation.runtime.loadPack(invocation.positionals[0]!))
+        .decisions;
+      const data = evaluateDecisions({
+        context,
+        decisions: parseDecisionDocument(loadedDecisions),
+        entryDecision,
+      });
+      invocation.runtime.logger.log("info", "Evaluated an explicit knowledge pack decision.");
+      renderCommandSuccess(output, invocation, "decide", data);
     },
   },
 ];
@@ -339,7 +445,8 @@ export const rootCommand: CommandDefinition = {
   resultSchema: rootCapabilitySchema,
   errorCodes: configPathErrorCodes,
   exitCodes: [0, 2],
-  handler: (output) => renderSuccess(output, "describe", describeCommand()),
+  handler: (output, invocation) =>
+    renderCommandSuccess(output, invocation, "describe", describeCommand()),
 };
 
 export type KnownCommand = "lore" | (typeof commandRegistry)[number]["name"];
@@ -360,6 +467,7 @@ export interface Invocation {
   command: KnownCommand | "unknown";
   configPath: string | undefined;
   help: boolean;
+  human: boolean;
   valid: boolean;
   version: boolean;
 }
@@ -368,6 +476,7 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
   const positionals: string[] = [];
   const suppliedOptions: ParsedOption[] = [];
   let help = false;
+  let human = false;
   let version = false;
 
   for (let index = 0; index < arguments_.length; index += 1) {
@@ -385,8 +494,9 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
     if (argument.startsWith("--")) {
       const parsedOption = parseOption(argument, arguments_[index + 1]);
       if (parsedOption === undefined) {
-        return invalidInvocation("unknown", help, version, configPathFrom(suppliedOptions));
+        return invalidInvocation("unknown", help, human, version, configPathFrom(suppliedOptions));
       }
+      if (parsedOption.option.option.flag === "--human") human = true;
       if (parsedOption.consumeNext) index += 1;
       suppliedOptions.push(parsedOption.option);
       continue;
@@ -395,6 +505,7 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
       return invalidInvocation(
         commandFromPositionals(positionals),
         help,
+        human,
         version,
         configPathFrom(suppliedOptions),
       );
@@ -404,10 +515,10 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
 
   const configPath = configPathFrom(suppliedOptions);
   if (help && version)
-    return invalidInvocation(commandFromPositionals(positionals), help, version, configPath);
+    return invalidInvocation(commandFromPositionals(positionals), help, human, version, configPath);
 
   const command = commandFromPositionals(positionals);
-  if (command === "unknown") return invalidInvocation(command, help, version, configPath);
+  if (command === "unknown") return invalidInvocation(command, help, human, version, configPath);
 
   const definition = command === "lore" ? rootCommand : findCommand(command);
   if (
@@ -417,25 +528,27 @@ export function inspectInvocation(arguments_: readonly string[]): Invocation {
       positionals.slice(commandTokenCount(command)),
     )
   ) {
-    return invalidInvocation(command, help, version, configPath);
+    return invalidInvocation(command, help, human, version, configPath);
   }
 
-  if (version && command !== "lore") return invalidInvocation(command, help, version, configPath);
+  if (version && command !== "lore")
+    return invalidInvocation(command, help, human, version, configPath);
   if (!hasAllowedOptions(definition, suppliedOptions))
-    return invalidInvocation(command, help, version, configPath);
+    return invalidInvocation(command, help, human, version, configPath);
   if (!help && !hasRequiredOptions(definition, suppliedOptions))
-    return invalidInvocation(command, help, version, configPath);
+    return invalidInvocation(command, help, human, version, configPath);
 
-  return { command, configPath, help, valid: true, version };
+  return { command, configPath, help, human, valid: true, version };
 }
 
 function invalidInvocation(
   command: KnownCommand | "unknown",
   help: boolean,
+  human: boolean,
   version: boolean,
   configPath: string | undefined,
 ): Invocation {
-  return { command, configPath, help, valid: false, version };
+  return { command, configPath, help, human, valid: false, version };
 }
 
 interface OptionSpec {
@@ -573,4 +686,36 @@ function toOptionSpec(option: CommandOption): OptionSpec {
 
 function hasAllowedValue(option: OptionSpec, value: string): boolean {
   return option.values === undefined || option.values.includes(value);
+}
+
+function requiredStringOption(options: Readonly<Record<string, unknown>>, name: string): string {
+  // Read a required single-value option; missing or non-string values are rejected as usage.invalid.
+  const value = options[name];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new CliError("usage.invalid", "The command invocation is invalid.");
+  }
+  return value;
+}
+
+/** Parse the JSON object passed via --context; arrays, scalars, and null are rejected as usage errors. */
+function parseDecisionContext(source: string): Readonly<Record<string, unknown>> {
+  let value: unknown;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    throw new CliError("usage.invalid", "The command invocation is invalid.");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new CliError("usage.invalid", "The command invocation is invalid.");
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function renderCommandSuccess<T>(
+  output: OutputWriter,
+  invocation: CommandInvocation,
+  command: string,
+  data: T,
+): void {
+  renderSuccess(output, command, data, invocation.options.human === true);
 }

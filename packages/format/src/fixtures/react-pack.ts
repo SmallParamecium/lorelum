@@ -44,7 +44,11 @@ export function reactPack(): PackInput {
         id: "state.client-vs-server",
         question: "How much client state?",
         branches: [
-          { when: "heavy client state", recommend: ["react.state.redux"], reason: "Redux scales" },
+          {
+            when: 'state.client == "heavy"',
+            recommend: ["react.state.redux"],
+            reason: "Redux scales",
+          },
         ],
       },
     ],
