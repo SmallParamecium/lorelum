@@ -20,7 +20,14 @@ test("describes registered commands from a single registry", () => {
   };
   expect(description.name).toBe("lore");
   expect(description.commands.map((command) => command.name)).toEqual(
-    expect.arrayContaining(["describe", "config", "config.path", "config.show", "validate"]),
+    expect.arrayContaining([
+      "describe",
+      "config",
+      "config.path",
+      "config.show",
+      "validate",
+      "decide",
+    ]),
   );
   expect(description.commands.every((command) => Array.isArray(command.errorCodes))).toBe(true);
   expect(Object.hasOwn(description, "handler")).toBe(false);
@@ -37,16 +44,36 @@ test("validates commands and global options before special responses", () => {
     command: "describe",
     configPath: undefined,
     help: true,
+    human: false,
     valid: true,
     version: false,
   });
   expect(inspectInvocation(["missing", "--help"])).toMatchObject({ valid: false });
   expect(inspectInvocation(["--log-level", "--version"])).toMatchObject({ valid: false });
+  expect(inspectInvocation(["--context", "--human"])).toMatchObject({ human: false, valid: false });
   expect(inspectInvocation(["--log-level=debug"])).toMatchObject({ valid: true });
   expect(inspectInvocation(["--log-level=verbose"])).toMatchObject({ valid: false });
   expect(inspectInvocation(["validate", "pack", "--lenient"])).toMatchObject({
     command: "validate",
     valid: true,
+  });
+  expect(
+    inspectInvocation(["decide", "pack", "--decision", "state.entry", "--context", "{}"]),
+  ).toMatchObject({ command: "decide", valid: true });
+  expect(
+    inspectInvocation([
+      "decide",
+      "pack",
+      "--decision",
+      "state.entry",
+      "--context",
+      "{}",
+      "--human",
+    ]),
+  ).toMatchObject({ command: "decide", human: true, valid: true });
+  expect(inspectInvocation(["decide", "pack", "--decision", "state.entry"])).toMatchObject({
+    command: "decide",
+    valid: false,
   });
   expect(inspectInvocation(["config", "show", "--lenient"])).toMatchObject({ valid: false });
   expect(inspectInvocation(["--config=/tmp/config.json", "config", "path"])).toMatchObject({
@@ -56,6 +83,20 @@ test("validates commands and global options before special responses", () => {
   });
   expect(describeCommand("config.show")).toMatchObject({
     errorCodes: expect.arrayContaining(["config.unknown_field", "config.unsupported_version"]),
+  });
+  expect(describeCommand("decide")).toMatchObject({
+    usage: "decide <pack-path>",
+    options: expect.arrayContaining([
+      expect.objectContaining({ name: "--decision <id>", required: true }),
+      expect.objectContaining({ name: "--context <json>", required: true }),
+      expect.objectContaining({ name: "--human", required: false }),
+    ]),
+    errorCodes: expect.arrayContaining([
+      "decide.unknown_decision",
+      "decide.invalid_condition",
+      "decide.duplicate_decision",
+      "decide.cycle",
+    ]),
   });
 });
 

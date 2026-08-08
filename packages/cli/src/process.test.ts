@@ -53,6 +53,83 @@ test("source and compiled binaries preserve the version protocol", async () => {
     });
     expect(valid.stderr).toBe("");
 
+    await writeFile(
+      join(packDirectory, "decisions.yaml"),
+      `- id: process.entry
+  question: What next?
+  branches:
+    - when: 'state.client == "heavy"'
+      recommend: []
+      reason: Heavy client state
+    - when: 'state.client == "light"'
+      recommend: []
+      reason: Light client state
+`,
+    );
+    const matched = await runProcess([
+      executable,
+      "decide",
+      packDirectory,
+      "--decision",
+      "process.entry",
+      "--context",
+      '{"state":{"client":"heavy"}}',
+    ]);
+    expect(matched.exitCode).toBe(0);
+    expect(JSON.parse(matched.stdout)).toMatchObject({
+      command: "decide",
+      ok: true,
+      data: {
+        status: "matched",
+        trace: [expect.objectContaining({ matchedWhen: 'state.client == "heavy"' })],
+      },
+    });
+    expect(matched.stderr).toBe("");
+
+    const noMatch = await runProcess([
+      executable,
+      "decide",
+      packDirectory,
+      "--decision",
+      "process.entry",
+      "--context",
+      '{"state":{"client":"unknown"}}',
+    ]);
+    expect(noMatch.exitCode).toBe(0);
+    expect(JSON.parse(noMatch.stdout)).toMatchObject({
+      command: "decide",
+      ok: true,
+      data: { noMatchReason: "no branch matched the provided context", status: "no_match" },
+    });
+    expect(noMatch.stderr).toBe("");
+
+    await writeFile(
+      join(packDirectory, "decisions.yaml"),
+      `- id: process.entry
+  question: What next?
+  branches:
+    - when: 'state.client = heavy'
+      recommend: []
+      reason: Invalid condition syntax
+`,
+    );
+    const invalidCondition = await runProcess([
+      executable,
+      "decide",
+      packDirectory,
+      "--decision",
+      "process.entry",
+      "--context",
+      "{}",
+    ]);
+    expect(invalidCondition.exitCode).toBe(2);
+    expect(JSON.parse(invalidCondition.stdout)).toMatchObject({
+      command: "decide",
+      ok: false,
+      error: { code: "decide.invalid_condition" },
+    });
+    expect(invalidCondition.stderr).toBe("");
+
     await writeFile(join(packDirectory, "decisions.yaml"), "id: process.entry\n");
     const invalidDecisionsContainer = await runProcess([executable, "validate", packDirectory]);
     expect(invalidDecisionsContainer.exitCode).toBe(1);
@@ -123,7 +200,7 @@ test("source and compiled binaries preserve the version protocol", async () => {
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
-}, 60_000);
+}, 120_000);
 
 async function runProcess(
   command: string[],
