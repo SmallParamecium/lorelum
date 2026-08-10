@@ -40,3 +40,20 @@ test("rejects conditions beyond the nesting limit", () => {
   const source = "(".repeat(129) + "true" + ")".repeat(129);
   expect(() => evaluateCondition(source, {})).toThrow(ConditionSyntaxError);
 });
+
+test("rejects flat logical chains beyond the binary operator limit", () => {
+  // 1025 operators exceeds the 1024 cap; parsing must reject it as a syntax
+  // error instead of overflowing the call stack during evaluation.
+  const source = Array.from({ length: 1026 }, () => "true").join(" && ");
+  expect(() => evaluateCondition(source, {})).toThrow(ConditionSyntaxError);
+});
+
+test("rejects long || chains beyond the binary operator limit", () => {
+  const source = Array.from({ length: 1026 }, () => "false").join(" || ");
+  expect(() => evaluateCondition(source, {})).toThrow(ConditionSyntaxError);
+});
+
+test("accepts flat logical chains within the binary operator limit", () => {
+  const source = Array.from({ length: 1025 }, () => "true").join(" && ");
+  expect(evaluateCondition(source, {})).toBe(true);
+});

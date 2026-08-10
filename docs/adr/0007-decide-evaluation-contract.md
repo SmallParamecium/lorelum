@@ -35,8 +35,9 @@ branch.when uses a small expression language:
 - ==, !=, &&, ||, !, and parentheses.
 
 To keep evaluation bounded, expressions may nest unary operators and
-parenthesized subexpressions to at most 128 levels. Deeper expressions are
-rejected as invalid conditions.
+parenthesized subexpressions to at most 128 levels and may contain at most
+1024 binary operators (&& and ||) in total. Expressions that exceed either
+limit are rejected as invalid conditions.
 
 The language does not execute JavaScript, call functions, evaluate regular
 expressions, or provide collection quantifiers. Invalid syntax returns
