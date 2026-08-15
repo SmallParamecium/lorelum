@@ -1,5 +1,10 @@
-import { evaluateDecisions, v1PackInputLimits } from "@lorelum/engine";
-import { parseDecisionDocument, validatePack } from "@lorelum/format";
+import { evaluateDecisions, retrievePractices, v1PackInputLimits } from "@lorelum/engine";
+import {
+  parseDecisionDocument,
+  PracticeSchema,
+  validatePack,
+  type Practice,
+} from "@lorelum/format";
 
 import type { OutputWriter } from "./output/protocol.js";
 import { renderSuccess } from "./output/protocol.js";
@@ -87,6 +92,25 @@ const decideOptions: readonly CommandOption[] = [
     required: true,
   },
 ];
+const queryOptions: readonly CommandOption[] = [
+  ...globalOptions,
+  {
+    name: "--query <text>",
+    description: "Natural-language task description used to retrieve practices.",
+    required: true,
+  },
+  {
+    name: "--top-k <n>",
+    description: "Maximum results to return; default 5, valid range 1-50.",
+    required: false,
+  },
+  {
+    name: "--full",
+    description: "Include each result's full body in the response.",
+    required: false,
+  },
+];
+const getOptions: readonly CommandOption[] = [...globalOptions];
 
 const stringSchema: JsonSchema = { type: "string" };
 function validationIssueSchema(level: "error" | "warning" | "info"): JsonSchema {
@@ -171,6 +195,26 @@ const decisionResultSchema: JsonSchema = {
     },
   ],
 };
+const practiceSummarySchema = PracticeSchema.pick({
+  id: true,
+  title: true,
+  stage: true,
+  tech_stack: true,
+  applies_when: true,
+  body: true,
+}).toJSONSchema() as unknown as JsonSchema;
+const queryResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["query", "k", "total", "results"],
+  properties: {
+    query: stringSchema,
+    k: { type: "integer" },
+    total: { type: "integer" },
+    results: { type: "array", items: practiceSummarySchema },
+  },
+};
+const getResultSchema = PracticeSchema.toJSONSchema() as unknown as JsonSchema;
 const configPathResultSchema: JsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -432,6 +476,83 @@ export const commandRegistry: CommandDefinition[] = [
       });
       invocation.runtime.logger.log("info", "Evaluated an explicit knowledge pack decision.");
       renderCommandSuccess(output, invocation, "decide", data);
+    },
+  },
+  {
+    usage: "query <pack-path>",
+    name: "query",
+    summary: "Retrieve the most relevant practices for a natural-language task description.",
+    positionals: [
+      {
+        name: "pack-path",
+        description: "Explicit v1 pack directory. Relative paths resolve once at invocation time.",
+        required: true,
+        constraints: validatePackPathConstraints,
+      },
+    ],
+    options: queryOptions,
+    resultSchema: queryResultSchema,
+    errorCodes: [
+      ...configPathErrorCodes,
+      "pack.path_invalid",
+      "pack.unreadable",
+      "pack.parse_error",
+    ],
+    exitCodes: [0, 2],
+    handler: async (output, invocation) => {
+      const query = requiredStringOption(invocation.options, "query");
+      const topK = parseTopK(invocation.options.topK);
+      const loaded = await invocation.runtime.loadPack(invocation.positionals[0]!);
+      const data = retrievePractices({
+        practices: parsePracticeDocuments(loaded.practices),
+        query,
+        topK,
+        includeBody: invocation.options.full === true,
+      });
+      invocation.runtime.logger.log("info", "Retrieved practices from an explicit knowledge pack.");
+      renderCommandSuccess(output, invocation, "query", data);
+    },
+  },
+  {
+    usage: "get <pack-path> <practice-id>",
+    name: "get",
+    summary: "Return one practice's full content by id.",
+    positionals: [
+      {
+        name: "pack-path",
+        description: "Explicit v1 pack directory. Relative paths resolve once at invocation time.",
+        required: true,
+        constraints: validatePackPathConstraints,
+      },
+      {
+        name: "practice-id",
+        description: "Dotted practice id; the schema-declared lore get key.",
+        required: true,
+      },
+    ],
+    options: getOptions,
+    resultSchema: getResultSchema,
+    errorCodes: [
+      ...configPathErrorCodes,
+      "pack.path_invalid",
+      "pack.unreadable",
+      "pack.parse_error",
+      "get.unknown_practice",
+    ],
+    exitCodes: [0, 2],
+    handler: async (output, invocation) => {
+      const loaded = await invocation.runtime.loadPack(invocation.positionals[0]!);
+      const practice = parsePracticeDocuments(loaded.practices).find(
+        (candidate) => candidate.id === invocation.positionals[1],
+      );
+      if (practice === undefined) {
+        throw new CliError("get.unknown_practice", "The requested practice could not be found.");
+      }
+      invocation.runtime.logger.log(
+        "info",
+        "Retrieved one practice from an explicit knowledge pack.",
+      );
+      renderCommandSuccess(output, invocation, "get", practice);
     },
   },
 ];
@@ -709,6 +830,38 @@ function parseDecisionContext(source: string): Readonly<Record<string, unknown>>
     throw new CliError("usage.invalid", "The command invocation is invalid.");
   }
   return value as Readonly<Record<string, unknown>>;
+}
+
+/** Parse the --top-k option; missing defaults to 5, anything outside 1-50 is a usage error. */
+function parseTopK(value: unknown): number {
+  if (value === undefined) return 5;
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) {
+    throw new CliError("usage.invalid", "The command invocation is invalid.");
+  }
+  const topK = Number.parseInt(value, 10);
+  if (topK < 1 || topK > 50) {
+    throw new CliError("usage.invalid", "The command invocation is invalid.");
+  }
+  return topK;
+}
+
+/** Validate raw practice documents through the format schema; failures map to pack.parse_error. */
+function parsePracticeDocuments(practices: unknown): Practice[] {
+  if (!Array.isArray(practices)) {
+    throw new CliError(
+      "pack.parse_error",
+      "The practices document is not a list of practice nodes.",
+    );
+  }
+  const parsed: Practice[] = [];
+  for (const practice of practices) {
+    const result = PracticeSchema.safeParse(practice);
+    if (!result.success) {
+      throw new CliError("pack.parse_error", "A practice document could not be parsed.");
+    }
+    parsed.push(result.data);
+  }
+  return parsed;
 }
 
 function renderCommandSuccess<T>(

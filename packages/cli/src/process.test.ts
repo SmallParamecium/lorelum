@@ -103,6 +103,49 @@ test("source and compiled binaries preserve the version protocol", async () => {
     });
     expect(noMatch.stderr).toBe("");
 
+    await mkdir(join(packDirectory, "practices"));
+    await writeFile(
+      join(packDirectory, "practices", "api-layer.md"),
+      [
+        "---",
+        "id: process.api-layer",
+        "title: Layer the API client",
+        "stage: api-layer",
+        "tech_stack:",
+        "  - react",
+        "applies_when: building an API layer in a React SPA",
+        "---",
+        "Put HTTP calls behind a client module.",
+        "",
+      ].join("\n"),
+    );
+    const queried = await runProcess([executable, "query", packDirectory, "--query", "api layer"]);
+    expect(queried.exitCode).toBe(0);
+    expect(JSON.parse(queried.stdout)).toMatchObject({
+      command: "query",
+      ok: true,
+      data: { total: 1, results: [{ id: "process.api-layer" }] },
+    });
+    expect(queried.stderr).toBe("");
+
+    const fetched = await runProcess([executable, "get", packDirectory, "process.api-layer"]);
+    expect(fetched.exitCode).toBe(0);
+    expect(JSON.parse(fetched.stdout)).toMatchObject({
+      command: "get",
+      ok: true,
+      data: { id: "process.api-layer", body: "Put HTTP calls behind a client module.\n" },
+    });
+    expect(fetched.stderr).toBe("");
+
+    const missing = await runProcess([executable, "get", packDirectory, "process.missing"]);
+    expect(missing.exitCode).toBe(2);
+    expect(JSON.parse(missing.stdout)).toMatchObject({
+      command: "get",
+      ok: false,
+      error: { code: "get.unknown_practice" },
+    });
+    expect(missing.stderr).toBe("");
+
     await writeFile(
       join(packDirectory, "decisions.yaml"),
       `- id: process.entry

@@ -9,3 +9,4 @@ export const PACKAGE_NAME = "@lorelum/engine";
 
 export * from "./pack-loader";
 export * from "./decide";
+export * from "./retrieve";

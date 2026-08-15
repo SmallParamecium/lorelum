@@ -120,6 +120,66 @@ try {
   if (data(lenient).valid !== false)
     throw new Error("Lenient validation changed the report content.");
 
+  await mkdir(join(packDirectory, "practices"));
+  await writeFile(
+    join(packDirectory, "practices", "api-layer.md"),
+    [
+      "---",
+      "id: binary.api-layer",
+      "title: Layer the API client",
+      "stage: api-layer",
+      "tech_stack:",
+      "  - react",
+      "applies_when: building an API layer in a React SPA",
+      "---",
+      "Put HTTP calls behind a client module.",
+      "",
+    ].join("\n"),
+  );
+
+  const queryCapability = assertCommandCapability(
+    await assertResponse([binary, "describe", "query"], 0, "describe"),
+    "query",
+    "query <pack-path>",
+  );
+  const getCapability = assertCommandCapability(
+    await assertResponse([binary, "describe", "get"], 0, "describe"),
+    "get",
+    "get <pack-path> <practice-id>",
+  );
+
+  const query = await assertResponse(
+    [binary, "query", packDirectory, "--query", "api layer"],
+    0,
+    "query",
+  );
+  assertSuccess(query);
+  assertJsonSchema(
+    data(query),
+    asRecord(queryCapability.resultSchema) as JsonSchema,
+    "query result",
+  );
+  const queryResult = asRecord(asArray(data(query).results)[0]);
+  if (queryResult.id !== "binary.api-layer") {
+    throw new Error("Compiled binary did not retrieve the expected practice.");
+  }
+
+  const get = await assertResponse([binary, "get", packDirectory, "binary.api-layer"], 0, "get");
+  assertSuccess(get);
+  assertJsonSchema(data(get), asRecord(getCapability.resultSchema) as JsonSchema, "get result");
+  if (data(get).id !== "binary.api-layer") {
+    throw new Error("Compiled binary did not return the expected practice by id.");
+  }
+
+  const invalidTopK = await assertResponse(
+    [binary, "query", packDirectory, "--query", "api layer", "--top-k", "0"],
+    2,
+    "query",
+  );
+  if (invalidTopK.ok !== false || asRecord(invalidTopK.error).code !== "usage.invalid") {
+    throw new Error("Compiled binary did not reject an out-of-range --top-k value.");
+  }
+
   const invalid = await run([binary, "--private-token"]);
   if (invalid.exitCode !== 2 || invalid.stderr !== "" || invalid.stdout.includes("private-token")) {
     throw new Error("Invalid invocation did not preserve the public protocol boundary.");
@@ -183,6 +243,30 @@ function assertGoldenEnvelope(
 
 function assertSuccess(envelope: Record<string, unknown>): void {
   if (envelope.ok !== true) throw new Error("Compiled binary returned a failure envelope.");
+}
+
+function assertCommandCapability(
+  envelope: Record<string, unknown>,
+  expectedName: string,
+  expectedUsage: string,
+): Record<string, unknown> {
+  const capability = data(envelope);
+  if (capability.name !== expectedName || capability.usage !== expectedUsage) {
+    throw new Error("Compiled binary did not describe the expected command.");
+  }
+  for (const field of ["positionals", "options", "resultSchema", "errorCodes", "exitCodes"]) {
+    if (!Object.hasOwn(capability, field)) {
+      throw new Error(`Compiled binary command description is missing ${field}.`);
+    }
+  }
+  if (asArray(capability.positionals).length === 0 || asArray(capability.options).length === 0) {
+    throw new Error("Compiled binary command description is missing input metadata.");
+  }
+  const resultSchema = asRecord(capability.resultSchema);
+  if (resultSchema.type !== "object") {
+    throw new Error("Compiled binary command description has an invalid result schema.");
+  }
+  return capability;
 }
 
 function assertJsonSchema(value: unknown, schema: JsonSchema, fixture: string): void {

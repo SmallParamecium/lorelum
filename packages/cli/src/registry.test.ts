@@ -27,6 +27,8 @@ test("describes registered commands from a single registry", () => {
       "config.show",
       "validate",
       "decide",
+      "query",
+      "get",
     ]),
   );
   expect(description.commands.every((command) => Array.isArray(command.errorCodes))).toBe(true);

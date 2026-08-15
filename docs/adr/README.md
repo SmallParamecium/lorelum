@@ -28,6 +28,7 @@ docs/adr/
 ├── 0005-deterministic-local-cli-config.md       # local config resolution contract
 ├── 0006-v1-pack-loader-layout.md                # v1 pack filesystem input contract
 ├── 0007-decide-evaluation-contract.md         # lore decide input and evaluation semantics
+├── 0008-query-get-retrieval-contract.md        # lore query/get deterministic retrieval contract
 └── 0000-template.md                           # copy this to start a new ADR
 ```
 
