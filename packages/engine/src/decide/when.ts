@@ -32,8 +32,18 @@ type EvaluationResult = boolean | typeof missing;
 /** Resolved operand value: a literal, an explicit null, or missing. */
 type ResolvedValue = Literal | null | typeof missing;
 
-/** Bounds expression nesting so pack text cannot overflow the call stack. */
+/**
+ * Bounds expression nesting (parentheses and unary operators) so pack text
+ * cannot overflow the call stack during parsing or evaluation.
+ */
 const maxConditionDepth = 128;
+
+/**
+ * Bounds the total number of binary operators in one condition. Left-associative
+ * && / || chains evaluate recursively along the chain, so a flat cap keeps
+ * evaluation depth bounded even when the chain itself is not nested.
+ */
+const maxBinaryOperators = 1024;
 
 export class ConditionSyntaxError extends Error {
   constructor() {
@@ -67,6 +77,7 @@ class Parser {
   #index = 0;
   #lookahead: Token | undefined;
   #depth = 0;
+  #binaryOperators = 0;
 
   constructor(readonly source: string) {}
 
@@ -80,7 +91,7 @@ class Parser {
   // Lowest precedence: || is left-associative over and expressions.
   private parseOr(): Expression {
     let expression = this.parseAnd();
-    while (this.matchOperator("||")) {
+    while (this.consumeLogicalOperator("||")) {
       expression = { left: expression, operator: "||", right: this.parseAnd(), type: "logical" };
     }
     return expression;
@@ -89,7 +100,7 @@ class Parser {
   // && is left-associative over unary expressions.
   private parseAnd(): Expression {
     let expression = this.parseUnary();
-    while (this.matchOperator("&&")) {
+    while (this.consumeLogicalOperator("&&")) {
       expression = { left: expression, operator: "&&", right: this.parseUnary(), type: "logical" };
     }
     return expression;
@@ -136,6 +147,14 @@ class Parser {
       default:
         throw new ConditionSyntaxError();
     }
+  }
+
+  /** Match a logical operator and count it toward the per-condition bound; a flat chain cannot grow unbounded. */
+  private consumeLogicalOperator(value: "&&" | "||"): boolean {
+    if (!this.matchOperator(value)) return false;
+    this.#binaryOperators += 1;
+    if (this.#binaryOperators > maxBinaryOperators) throw new ConditionSyntaxError();
+    return true;
   }
 
   private matchOperator(value: Extract<Token, { type: "operator" }>["value"]): boolean {
