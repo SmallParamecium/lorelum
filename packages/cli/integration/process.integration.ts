@@ -47,6 +47,13 @@ async function writeLocalStoreFixturePack(directory: string): Promise<string> {
   return packRoot;
 }
 
+async function writeEmptyPracticePack(directory: string): Promise<string> {
+  const packRoot = join(directory, "empty-practice-pack");
+  await mkdir(join(packRoot, "practices"), { recursive: true });
+  await writeFile(join(packRoot, "pack.yaml"), "name: empty-practice-pack\nversion: 0.1.0\n");
+  return packRoot;
+}
+
 if (bunExecutable === null) {
   throw new Error("Bun executable is required for CLI integration tests.");
 }
@@ -85,6 +92,62 @@ try {
   const storeRoot = { rootPath: join(directory, "store") };
   await createLocalStore().install(storeRoot, decoded.candidate, decoded.diagnostics);
 
+  const list = await runProcess([
+    executable,
+    "--store-root",
+    storeRoot.rootPath,
+    "list",
+  ]);
+  assert.equal(list.exitCode, 0);
+  const listResponse: unknown = JSON.parse(list.stdout);
+  assert(isRecord(listResponse));
+  assert.equal(listResponse.command, "list");
+  assert.equal(listResponse.ok, true);
+  assert(isRecord(listResponse.data));
+  assert.equal(listResponse.data.generation, 1);
+  assert.equal(listResponse.data.effectiveRevision, 1);
+  assert(Array.isArray(listResponse.data.packs));
+  assert.deepEqual(listResponse.data.packs, [
+    { name: "integration-query-get", version: "0.1.0", practiceCount: 2 },
+  ]);
+  assert.equal(list.stderr, "");
+
+  const listPack = await runProcess([
+    executable,
+    "--store-root",
+    storeRoot.rootPath,
+    "list",
+    "--pack",
+    "integration-query-get",
+  ]);
+  assert.equal(listPack.exitCode, 0);
+  const listPackResponse: unknown = JSON.parse(listPack.stdout);
+  assert(isRecord(listPackResponse));
+  assert.equal(listPackResponse.command, "list");
+  assert.equal(listPackResponse.ok, true);
+  assert(isRecord(listPackResponse.data));
+  assert.deepEqual(listPackResponse.data.pack, {
+    name: "integration-query-get",
+    version: "0.1.0",
+  });
+  assert.deepEqual(listPackResponse.data.practices, [
+    {
+      id: "react.api-client",
+      title: "Layer React API access",
+      applies_when: "adding remote requests to a React interface",
+    },
+    {
+      id: "react.resource-state",
+      title: "Separate resource and UI state",
+      applies_when: "storing remote resource data used by a React interface",
+    },
+  ]);
+  assert.equal(listPack.stderr, "");
+
+  const listedPractice = listPackResponse.data.practices[0];
+  assert(isRecord(listedPractice));
+  assert(typeof listedPractice.id === "string");
+
   const query = await runProcess([
     executable,
     "--store-root",
@@ -108,7 +171,7 @@ try {
     "--store-root",
     storeRoot.rootPath,
     "get",
-    "react.api-client",
+    listedPractice.id,
   ]);
   assert.equal(get.exitCode, 0);
   const getResponse: unknown = JSON.parse(get.stdout);
@@ -117,7 +180,7 @@ try {
   assert.equal(getResponse.ok, true);
   assert(isRecord(getResponse.data));
   assert(isRecord(getResponse.data.practice));
-  assert.equal(getResponse.data.practice.id, "react.api-client");
+  assert.equal(getResponse.data.practice.id, listedPractice.id);
   assert.equal(getResponse.data.practice.title, "Layer React API access");
   assert.equal(
     getResponse.data.practice.body,
@@ -125,10 +188,86 @@ try {
   );
   assert.equal(get.stderr, "");
 
+  const emptyPracticePackRoot = await writeEmptyPracticePack(directory);
+  const emptyPracticePack = await decodePackDirectory(emptyPracticePackRoot);
+  const emptyPracticeStoreRoot = { rootPath: join(directory, "empty-practice-store") };
+  await createLocalStore().install(
+    emptyPracticeStoreRoot,
+    emptyPracticePack.candidate,
+    emptyPracticePack.diagnostics,
+  );
+
+  const emptyPracticeList = await runProcess([
+    executable,
+    "--store-root",
+    emptyPracticeStoreRoot.rootPath,
+    "list",
+  ]);
+  assert.equal(emptyPracticeList.exitCode, 0);
+  const emptyPracticeListResponse: unknown = JSON.parse(emptyPracticeList.stdout);
+  assert(isRecord(emptyPracticeListResponse));
+  assert(isRecord(emptyPracticeListResponse.data));
+  assert.deepEqual(emptyPracticeListResponse.data.packs, [
+    { name: "empty-practice-pack", version: "0.1.0", practiceCount: 0 },
+  ]);
+  assert.equal(emptyPracticeList.stderr, "");
+
+  const emptyPracticeCatalog = await runProcess([
+    executable,
+    "--store-root",
+    emptyPracticeStoreRoot.rootPath,
+    "list",
+    "--pack",
+    "empty-practice-pack",
+  ]);
+  assert.equal(emptyPracticeCatalog.exitCode, 0);
+  const emptyPracticeCatalogResponse: unknown = JSON.parse(emptyPracticeCatalog.stdout);
+  assert(isRecord(emptyPracticeCatalogResponse));
+  assert(isRecord(emptyPracticeCatalogResponse.data));
+  assert.deepEqual(emptyPracticeCatalogResponse.data.pack, {
+    name: "empty-practice-pack",
+    version: "0.1.0",
+  });
+  assert.deepEqual(emptyPracticeCatalogResponse.data.practices, []);
+  assert.equal(emptyPracticeCatalog.stderr, "");
+
+  const emptyStoreRoot = join(directory, "empty-store");
+  const emptyList = await runProcess([
+    executable,
+    "--store-root",
+    emptyStoreRoot,
+    "list",
+  ]);
+  assert.equal(emptyList.exitCode, 0);
+  const emptyListResponse: unknown = JSON.parse(emptyList.stdout);
+  assert(isRecord(emptyListResponse));
+  assert.equal(emptyListResponse.command, "list");
+  assert.equal(emptyListResponse.ok, true);
+  assert(isRecord(emptyListResponse.data));
+  assert.deepEqual(emptyListResponse.data.packs, []);
+  assert.equal(emptyList.stderr, "");
+
+  const missingPack = await runProcess([
+    executable,
+    "--store-root",
+    storeRoot.rootPath,
+    "list",
+    "--pack",
+    "missing-pack",
+  ]);
+  assert.equal(missingPack.exitCode, 2);
+  assert.deepEqual(selectProtocolFields(missingPack.stdout), {
+    command: "list",
+    errorCode: "list.pack-not-found",
+    ok: false,
+  });
+  assert.equal(missingPack.stdout.includes("missing-pack"), false);
+  assert.equal(missingPack.stderr, "");
+
   const emptyQuery = await runProcess([
     executable,
     "--store-root",
-    join(directory, "empty-store"),
+    emptyStoreRoot,
     "query",
     "remote requests",
   ]);

@@ -8,6 +8,7 @@ import { frameworkErrorCodes, invalidInvocationError } from "./runtime/errors.js
 import { logLevels } from "./runtime/logger.js";
 import { createInstallCommand } from "./install/install-command.js";
 import { createLocalizationCommands } from "./localization/index.js";
+import { createListCommand } from "./list/list-command.js";
 import { createQueryCommand } from "./query/query-command.js";
 import { createGetCommand } from "./get/get-command.js";
 
@@ -231,6 +232,7 @@ export const commandRegistry = snapshotCommandDefinitions([
   discoveryCommandDefinition,
   createInstallCommand(),
   ...createLocalizationCommands(),
+  createListCommand(),
   createQueryCommand(),
   createGetCommand(),
 ]);

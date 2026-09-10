@@ -1,14 +1,10 @@
 import { UnknownPracticeError } from "@lorelum/engine";
 
-import { CliError, cliErrorCodes, frameworkErrorCodes } from "../runtime/errors.js";
-import { throwVisibleStoreError } from "../runtime/store-errors.js";
+import { CliError, cliErrorCodes } from "../runtime/errors.js";
+import { storeReadErrorCodes, throwVisibleStoreError } from "../runtime/store-errors.js";
 
 /** Error allowlist shared by LocalStore-backed retrieval commands. */
-export const retrievalErrorCodes = Object.freeze([
-  ...frameworkErrorCodes,
-  cliErrorCodes.storeBusy,
-  cliErrorCodes.storeRecoveryRequired,
-]);
+export const retrievalErrorCodes = storeReadErrorCodes;
 
 /** Error allowlist for id-addressed LocalStore retrieval (`lore get`). */
 export const getRetrievalErrorCodes = Object.freeze([

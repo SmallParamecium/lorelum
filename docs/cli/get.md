@@ -5,13 +5,17 @@ ID from the selected LocalStore. The contract is defined in
 [ADR 0011](../adr/0011-get-retrieval-contract.md).
 
 ```sh
+lore list
+lore list --pack agentic-coding
 lore query "classify a failing React test"
 lore get agentic-coding.testing.classify-failure-before-changing-test
 lore --store-root /path/to/isolated-store get agentic-coding.testing.classify-failure-before-changing-test
 lore describe get
 ```
 
-The ID must follow the existing dotted Practice ID format. Lookup is exact:
+A typical discovery flow is `lore list`, then `lore list --pack <name>`,
+followed by `lore get <practice-id>`. The ID must follow the existing dotted
+Practice ID format. Lookup is exact:
 there is no title matching, prefix completion, or case normalization. The global
 `--store-root` option also works after the command; relative paths resolve from
 the calling process's working directory. Omitting it selects the user Store.

@@ -7,6 +7,7 @@
 export {
   createLocalStore,
   defaultStorageRoot,
+  type InstalledPackSummary,
   type LocalStore,
   type OpenResult,
   type StorageRoot,

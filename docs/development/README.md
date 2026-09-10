@@ -10,6 +10,7 @@ human contribution contract, then use the relevant links below.
 - [Tests and CI](../../CONTRIBUTING.md#testing--ci)
 - [Issues, branches, and PRs](../../CONTRIBUTING.md#development-workflow)
 - [Local CLI and worktrees](#local-cli-and-multiple-worktrees)
+- [Discover installed Packs with `lore list`](../cli/list.md)
 - [Read an installed Practice with `lore get`](../cli/get.md)
 
 ## Proposed plans
@@ -17,7 +18,7 @@ human contribution contract, then use the relevant links below.
 - [Query phased implementation roadmap (Chinese)](../plans/query-roadmap.md) -
   keyword retrieval, configuration, embedding profiles, and derived indexes.
   It describes future evolution beyond the currently available LocalStore-backed
-  query and get v1 commands.
+  list, query, and get v1 commands.
 
 ## Local CLI and multiple worktrees
 
@@ -28,8 +29,8 @@ The CLI's discoverable global option is:
 ```
 
 When omitted, the Store remains `~/.lorelum`. A relative path is resolved from
-the calling process's current working directory. `install`, `query`, and `get`
-consume the selected LocalStore.
+the calling process's current working directory. `install`, `list`, `query`, and
+`get` consume the selected LocalStore.
 
 ### A copyable `lore-dev` function
 
@@ -78,6 +79,13 @@ bun run build:cli
 ./dist/lore --store-root "$(git rev-parse --path-format=absolute --git-path lorelum/store)" install pack-creator --pack-version 0.1.0
 ```
 
+To inspect the selected Store before querying or reading a Practice, run:
+
+```zsh
+lore-dev list
+lore-dev list --pack agentic-coding
+```
+
 The globally available `lore` command should be a stable link into the primary
 checkout, such as `packages/cli/src/main.ts`. Do not repoint that link between
 worktrees, and do not point it at a Codex or temporary worktree. Use
@@ -99,10 +107,10 @@ inspect it instead of replacing it blindly.
 Any manual Store-writing workflow (for example, future `uninstall` or
 `reindex` commands) must pass an explicitly isolated `--store-root`. These
 commands are not implemented merely because they are named here; the rule is a
-forward-looking safety constraint. `query` and `get` honor `--store-root`
-explicitly when an alternate Store is intended. During development, `get` also
-needs an isolated root because its cold open can initialize or recover the
-selected Store.
+forward-looking safety constraint. `list`, `query`, and `get` honor
+`--store-root` explicitly when an alternate Store is intended. During
+development, LocalStore-backed reads such as `list` and `get` also need an
+isolated root because cold open can initialize or recover the selected Store.
 
 Automated tests should continue to use temporary directories for Store data.
 They must not write to `~/.lorelum` or to a developer's shared Store.

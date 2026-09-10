@@ -1,6 +1,13 @@
 import { StoreBusyError, StoreRecoveryRequiredError } from "@lorelum/engine";
 
-import { CliError, cliErrorCodes } from "./errors.js";
+import { CliError, cliErrorCodes, frameworkErrorCodes } from "./errors.js";
+
+/** Error allowlist shared by commands that read the LocalStore. */
+export const storeReadErrorCodes = Object.freeze([
+  ...frameworkErrorCodes,
+  cliErrorCodes.storeBusy,
+  cliErrorCodes.storeRecoveryRequired,
+]);
 
 export function toStoreCliError(error: unknown): CliError | undefined {
   if (error instanceof StoreBusyError) {
