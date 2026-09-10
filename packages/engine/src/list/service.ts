@@ -19,7 +19,7 @@ export interface ListService {
 }
 
 export interface ListServiceOptions {
-  readonly store?: LocalStore;
+  readonly store?: Pick<LocalStore, "open">;
   readonly storageRoot?: StorageRoot;
 }
 
@@ -31,14 +31,14 @@ export function createListService(options: ListServiceOptions = {}): ListService
   return Object.freeze({
     async list(request: ListRequest = {}): Promise<ListPacksResult> {
       const opened = await store.open(request.storageRoot ?? fallbackStorageRoot);
-      return {
+      return Object.freeze({
         ...retrievePacks({
           packs: opened.packs,
           effectivePractices: opened.effectivePractices,
         }),
         generation: opened.generation,
         effectiveRevision: opened.effectiveRevision,
-      };
+      });
     },
 
     async listPack(request: ListPackRequest): Promise<ListPackPracticesResult> {
@@ -53,11 +53,11 @@ export function createListService(options: ListServiceOptions = {}): ListService
         effectivePractices: opened.effectivePractices,
       });
       if (retrieved === null) throw new UnknownPackError(request.packName);
-      return {
+      return Object.freeze({
         ...retrieved,
         generation: opened.generation,
         effectiveRevision: opened.effectiveRevision,
-      };
+      });
     },
   });
 }

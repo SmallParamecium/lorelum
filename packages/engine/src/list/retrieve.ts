@@ -26,11 +26,11 @@ function practiceCountsByPack(
 }
 
 function projectPractice(effectivePractice: EffectivePractice): ListedPractice {
-  return {
+  return Object.freeze({
     id: effectivePractice.practice.id,
     title: effectivePractice.practice.title,
     applies_when: effectivePractice.practice.applies_when,
-  };
+  });
 }
 
 /** Project the active manifest into the `lore list` Pack catalog. */
@@ -45,7 +45,7 @@ export function retrievePacks(input: RetrievePacksInput): RetrievePacksResult {
       }),
     )
     .sort((left, right) => compareCodeUnits(left.name, right.name));
-  return { packs: Object.freeze(packs) };
+  return Object.freeze({ packs: Object.freeze(packs) });
 }
 
 /**
@@ -65,5 +65,5 @@ export function retrievePackPractices(
     )
     .map(projectPractice)
     .sort((left, right) => compareCodeUnits(left.id, right.id));
-  return { pack: projectedPack, practices: Object.freeze(practices) };
+  return Object.freeze({ pack: projectedPack, practices: Object.freeze(practices) });
 }

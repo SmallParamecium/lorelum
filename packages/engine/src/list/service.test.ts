@@ -67,22 +67,9 @@ async function writeLocalListPack(directory: string): Promise<string> {
   return packRoot;
 }
 
-function fakeStore(open: OpenResult): LocalStore {
+function fakeStore(open: OpenResult): Pick<LocalStore, "open"> {
   return {
     open: async () => open,
-    install: async () => {
-      throw new Error("not implemented");
-    },
-    upgrade: async () => {
-      throw new Error("not implemented");
-    },
-    uninstall: async () => {
-      throw new Error("not implemented");
-    },
-    reindex: async () => {
-      throw new Error("not implemented");
-    },
-    readEffectivePractices: async () => [],
   };
 }
 
@@ -96,12 +83,17 @@ test("ListService reads the Pack catalog and a selected Pack through LocalStore"
     await store.install(storageRoot, decoded.candidate, decoded.diagnostics);
     const service = createListService({ store, storageRoot });
 
-    await expect(service.list()).resolves.toEqual({
+    const packsResult = await service.list();
+    expect(packsResult).toEqual({
       generation: 1,
       effectiveRevision: 1,
       packs: [{ name: "local-list-fixture", version: "0.1.0", practiceCount: 2 }],
     });
-    await expect(service.listPack({ packName: "local-list-fixture" })).resolves.toEqual({
+    expect(Object.isFrozen(packsResult)).toBe(true);
+    expect(Object.isFrozen(packsResult.packs)).toBe(true);
+
+    const practicesResult = await service.listPack({ packName: "local-list-fixture" });
+    expect(practicesResult).toEqual({
       generation: 1,
       effectiveRevision: 1,
       pack: { name: "local-list-fixture", version: "0.1.0" },
@@ -118,6 +110,10 @@ test("ListService reads the Pack catalog and a selected Pack through LocalStore"
         },
       ],
     });
+    expect(Object.isFrozen(practicesResult)).toBe(true);
+    expect(Object.isFrozen(practicesResult.pack)).toBe(true);
+    expect(Object.isFrozen(practicesResult.practices)).toBe(true);
+    expect(Object.isFrozen(practicesResult.practices[0])).toBe(true);
   } finally {
     await removeStoreRoot(directory);
   }
@@ -178,7 +174,7 @@ test("ListService maps missing and blank Pack names to UnknownPackError", async 
 test("ListService propagates LocalStore busy and recovery failures", async () => {
   /* eslint-disable no-await-in-loop -- each error case asserts both sequential call sites. */
   for (const error of [new StoreBusyError("busy"), new StoreRecoveryRequiredError("recovery")]) {
-    const store: LocalStore = {
+    const store: Pick<LocalStore, "open"> = {
       ...fakeStore({
         generation: 0,
         effectiveRevision: 0,

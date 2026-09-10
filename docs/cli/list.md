@@ -3,7 +3,7 @@
 `lore list` discovers the active Packs in the selected LocalStore. Use
 `lore list --pack <name>` to inspect the Practice summaries provided by one
 installed Pack, then pass a returned Practice ID to `lore get`. The contract is
-defined in [ADR 0012](../adr/0012-list-catalog-contract.md).
+defined in [ADR 0014](../adr/0014-list-catalog-contract.md).
 
 This page documents the CLI/engine catalog contract. It assumes the caller
 already knows the Lorelum CLI entry point; it does not define automatic

@@ -31,7 +31,7 @@ docs/adr/
 ├── 0009-pack-localization-authoring.md         # Pack localization source assets and synchronization
 ├── 0010-query-retrieval-contract.md          # LocalStore-backed lore query retrieval contract
 ├── 0011-get-retrieval-contract.md            # LocalStore-backed lore get retrieval contract
-├── 0012-list-catalog-contract.md             # LocalStore-backed lore list catalog contract
+├── 0014-list-catalog-contract.md             # LocalStore-backed lore list catalog contract
 └── 0000-template.md                           # copy this to start a new ADR
 ```
 

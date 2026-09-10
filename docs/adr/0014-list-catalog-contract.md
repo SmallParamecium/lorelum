@@ -1,4 +1,4 @@
-# ADR 0012: LocalStore-backed lore list catalog contract
+# ADR 0014: LocalStore-backed lore list catalog contract
 
 - **Date:** 2026-09-08
 - **Status:** Proposed (local implementation)
