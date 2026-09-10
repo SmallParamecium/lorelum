@@ -95,7 +95,11 @@ describe("retrievePackPractices", () => {
         },
       ],
     });
-    expect(Object.isFrozen(result?.practices)).toBe(true);
+    if (result === null) throw new Error("expected an installed Pack catalog");
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.pack)).toBe(true);
+    expect(Object.isFrozen(result.practices)).toBe(true);
+    expect(Object.isFrozen(result.practices[0])).toBe(true);
 
     const sharedInZeta = retrievePackPractices({
       packName: "zeta",

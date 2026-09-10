@@ -7,7 +7,6 @@ import {
 import { PACK_NAME_REGEX } from "@lorelum/format";
 
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
-import { stringSchema } from "../output/schema-primitives.js";
 import { listErrorCodes, throwListVisibleError } from "./errors.js";
 import type { CommandDefinition } from "../registry.js";
 import { invalidInvocationError } from "../runtime/errors.js";
@@ -17,6 +16,8 @@ export interface ListCommandServices {
   readonly list: ListService;
   readonly storageRoot: StorageRoot;
 }
+
+const stringSchema: JsonSchema = { type: "string" };
 
 function defaultListServices(): ListCommandServices {
   const storageRoot = defaultStorageRoot();
