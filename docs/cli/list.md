@@ -86,4 +86,3 @@ Callers should branch on `error.code` rather than parsing `message`.
 `list` does not search remote Registries, perform semantic ranking, paginate,
 filter, or return complete Practice bodies. Use `lore query` for task-oriented
 retrieval and `lore get` for one complete Practice.
-
