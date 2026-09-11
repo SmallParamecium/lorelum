@@ -5,3 +5,11 @@ export class UnknownPackError extends Error {
     this.name = "UnknownPackError";
   }
 }
+
+/** Thrown when an injected Store does not provide the rich metadata capability. */
+export class PackDetailsUnavailableError extends Error {
+  constructor() {
+    super("The selected Store does not provide Pack metadata.");
+    this.name = "PackDetailsUnavailableError";
+  }
+}

@@ -1,4 +1,8 @@
-import type { ListService, StorageRoot, ListPackDetailsResult } from "@lorelum/engine";
+import type {
+  ListPackDetailsResult,
+  ListServiceWithPackDetails,
+  StorageRoot,
+} from "@lorelum/engine";
 import { PACK_NAME_REGEX } from "@lorelum/format";
 
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
@@ -8,7 +12,7 @@ import { invalidInvocationError } from "../runtime/errors.js";
 import { resolveInvocationStorageRoot } from "../store/storage-root.js";
 
 export interface ListCommandServices {
-  readonly list: Pick<ListService, "list" | "listPack" | "listPackDetails">;
+  readonly list: Pick<ListServiceWithPackDetails, "list" | "listPack" | "listPackDetails">;
   readonly storageRoot: StorageRoot;
 }
 

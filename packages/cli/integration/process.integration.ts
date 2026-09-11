@@ -338,12 +338,25 @@ console.log(JSON.stringify({
   assert.equal(isRecord(malformedResponse.error) && malformedResponse.error.code, "usage.invalid");
   assert.equal(existsSync(malformedRoot), false, "malformed IDs must not create a Store root");
 
-  const emptyList = await runList(compiledBinary, join(workingDirectory, "empty-list-store"));
+  const emptyStoreRoot = join(workingDirectory, "empty-list-store");
+  const emptyList = await runList(compiledBinary, emptyStoreRoot);
   assert.equal(emptyList.exitCode, 0);
   const emptyListResponse = parseSingleResponse(emptyList.stdout);
   assert.equal(emptyListResponse.ok, true);
   assert(isRecord(emptyListResponse.data));
   assert.deepEqual(emptyListResponse.data.packs, []);
+
+  const emptyPackDetails = await runList(compiledBinary, emptyStoreRoot, undefined, "packs");
+  assert.equal(emptyPackDetails.exitCode, 0);
+  assert.equal(emptyPackDetails.stderr, "");
+  const emptyPackDetailsResponse = parseSingleResponse(emptyPackDetails.stdout);
+  assert.equal(emptyPackDetailsResponse.ok, true);
+  const emptyPluginSummary = parsePluginSummaryEquivalent(emptyPackDetailsResponse);
+  assert.equal(emptyPluginSummary.continue, false);
+  if (emptyPluginSummary.continue) {
+    throw new Error("equivalent Plugin parser entered degraded mode for an empty Store");
+  }
+  assert.deepEqual(emptyPluginSummary.packs, []);
 
   const missingPack = await runList(compiledBinary, storageRoot, "missing-pack");
   assert.equal(missingPack.exitCode, 2);

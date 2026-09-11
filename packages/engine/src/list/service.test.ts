@@ -8,12 +8,13 @@ import {
   decodePackDirectory,
   StoreBusyError,
   StoreRecoveryRequiredError,
+  type InstalledPackDetailsReader,
   type LocalStore,
   type InstalledPackDetailsResult,
   type OpenResult,
   type StorageRoot,
 } from "../local-store/index.js";
-import { UnknownPackError } from "./errors.js";
+import { PackDetailsUnavailableError, UnknownPackError } from "./errors.js";
 import { createListService } from "./service.js";
 
 async function removeStoreRoot(rootPath: string): Promise<void> {
@@ -84,7 +85,7 @@ function fakeStore(
     effectiveRevision: open.effectiveRevision,
     packs: open.packs,
   },
-): Pick<LocalStore, "open" | "readInstalledPackDetails"> {
+): Pick<LocalStore, "open"> & InstalledPackDetailsReader {
   return {
     open: async () => open,
     readInstalledPackDetails: async () => details,
@@ -202,9 +203,34 @@ test("ListService succeeds with an empty fresh LocalStore", async () => {
       effectiveRevision: 0,
       packs: [],
     });
+    await expect(createListService({ storageRoot }).listPackDetails()).resolves.toEqual({
+      generation: 0,
+      effectiveRevision: 0,
+      packs: [],
+    });
   } finally {
     await removeStoreRoot(directory);
   }
+});
+
+test("keeps the existing list modes compatible with a Store without rich metadata", async () => {
+  const service = createListService({
+    store: {
+      open: async () => ({
+        generation: 0,
+        effectiveRevision: 0,
+        packs: [],
+        effectivePractices: [],
+      }),
+    },
+  });
+
+  await expect(service.list()).resolves.toEqual({
+    generation: 0,
+    effectiveRevision: 0,
+    packs: [],
+  });
+  await expect(service.listPackDetails()).rejects.toBeInstanceOf(PackDetailsUnavailableError);
 });
 
 test("ListService maps missing and blank Pack names to UnknownPackError", async () => {
@@ -224,7 +250,7 @@ test("ListService maps missing and blank Pack names to UnknownPackError", async 
 test("ListService propagates LocalStore busy and recovery failures", async () => {
   /* eslint-disable no-await-in-loop -- each error case asserts both sequential call sites. */
   for (const error of [new StoreBusyError("busy"), new StoreRecoveryRequiredError("recovery")]) {
-    const store: Pick<LocalStore, "open" | "readInstalledPackDetails"> = {
+    const store: Pick<LocalStore, "open"> & InstalledPackDetailsReader = {
       ...fakeStore({
         generation: 0,
         effectiveRevision: 0,

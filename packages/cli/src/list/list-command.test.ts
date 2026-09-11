@@ -7,7 +7,7 @@ import {
   defaultStorageRoot,
   type ListPackRequest,
   type ListRequest,
-  type ListService,
+  type ListServiceWithPackDetails,
 } from "@lorelum/engine";
 import { resolve } from "node:path";
 
@@ -66,7 +66,7 @@ const packDetailsResult = {
   ],
 };
 
-function service(): ListService {
+function service(): ListServiceWithPackDetails {
   return {
     async list() {
       return packsResult;

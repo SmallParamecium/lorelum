@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import type { ValidationIssue } from "@lorelum/format";
 
-import type { EffectivePractice, PackCandidate, PackSnapshot, RevisionDelta } from "../model";
+import type { EffectivePractice, PackCandidate, RevisionDelta } from "../model";
+import { toInstalledPackDetails, type InstalledPackDetails } from "../model/pack-details";
 
 import { installOrUpgrade } from "./install";
 import {
@@ -45,12 +46,6 @@ export interface InstalledPackSummary {
   readonly version: string;
 }
 
-/** Verified Pack metadata read from an active sealed projection. */
-export type InstalledPackDetails = Pick<
-  PackSnapshot,
-  "name" | "version" | "description" | "applies_to"
->;
-
 export interface InstalledPackDetailsResult {
   readonly generation: number;
   readonly effectiveRevision: number;
@@ -65,8 +60,6 @@ export interface LocalStore {
   ): Promise<EffectivePractice | undefined>;
   /** Cold open; throws StoreRecoveryRequiredError on any inconsistency. */
   open(root: StorageRoot): Promise<OpenResult>;
-  /** Read verified Pack metadata without widening the minimal `open()` result. */
-  readInstalledPackDetails(root: StorageRoot): Promise<InstalledPackDetailsResult>;
   install(
     root: StorageRoot,
     candidate: PackCandidate,
@@ -101,14 +94,12 @@ export interface LocalStore {
   onEffectiveRevisionAdvanced?: EffectiveRevisionHook | undefined;
 }
 
-function toInstalledPackDetails(pack: PackSnapshot): InstalledPackDetails {
-  return Object.freeze({
-    name: pack.name,
-    version: pack.version,
-    ...(pack.description === undefined ? {} : { description: pack.description }),
-    ...(pack.applies_to === undefined ? {} : { applies_to: Object.freeze([...pack.applies_to]) }),
-  });
+/** Optional capability for consumers that need verified Pack metadata. */
+export interface InstalledPackDetailsReader {
+  readInstalledPackDetails(root: StorageRoot): Promise<InstalledPackDetailsResult>;
 }
+
+export type { InstalledPackDetails } from "../model/pack-details";
 
 /**
  * The LocalStore public facade (ADR 0007 §13). Cross-medium commit ordering
@@ -118,9 +109,9 @@ function toInstalledPackDetails(pack: PackSnapshot): InstalledPackDetails {
  */
 export function createLocalStore(
   options: { onEffectiveRevisionAdvanced?: EffectiveRevisionHook } = {},
-): LocalStore {
+): LocalStore & InstalledPackDetailsReader {
   const hook = options.onEffectiveRevisionAdvanced;
-  const store: LocalStore = {
+  const store: LocalStore & InstalledPackDetailsReader = {
     getEffectivePractice(root, practiceId) {
       return getEffectivePractice(root.rootPath, practiceId);
     },

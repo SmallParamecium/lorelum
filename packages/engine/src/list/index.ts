@@ -1,6 +1,11 @@
-export { UnknownPackError } from "./errors.js";
+export { PackDetailsUnavailableError, UnknownPackError } from "./errors.js";
 export { retrievePackDetails, retrievePackPractices, retrievePacks } from "./retrieve.js";
-export { createListService, type ListService, type ListServiceOptions } from "./service.js";
+export {
+  createListService,
+  type ListService,
+  type ListServiceOptions,
+  type ListServiceWithPackDetails,
+} from "./service.js";
 export type {
   ListedPack,
   ListedPackDetails,
