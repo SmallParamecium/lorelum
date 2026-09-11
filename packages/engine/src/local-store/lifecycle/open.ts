@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { ID_REGEX } from "@lorelum/format";
 
-import { revisionDeltaPracticeIds, type EffectivePractice, type RevisionDelta } from "../model";
+import {
+  revisionDeltaPracticeIds,
+  type EffectivePractice,
+  type PackSnapshot,
+  type RevisionDelta,
+} from "../model";
 import { artifactPath, calculateArtifactDigest } from "../storage/artifacts/artifact-store";
 import {
   parseProjection,
@@ -49,11 +54,12 @@ import { runStoreRecovery } from "./recovery";
 
 /**
  * Internal cold-open result: the converged manifest plus materialized
- * practices. The public facade maps this to the exported `OpenResult`
+ * practices and verified Pack metadata. The public facade maps this to the exported `OpenResult`
  * (ADR 0007 §13), keeping the manifest type out of the public surface.
  */
 export interface ColdOpenResult {
   manifest: InstalledPacksManifest;
+  packDetails: readonly PackSnapshot[];
   effectivePractices: readonly EffectivePractice[];
 }
 
@@ -134,9 +140,9 @@ async function verifyArtifactsAndSources(
   rootPath: string,
   manifest: InstalledPacksManifest,
   effectivePractices: readonly EffectivePractice[],
-): Promise<void> {
+): Promise<readonly PackSnapshot[]> {
   const expectedSources = new Map<string, { digest: string }>();
-  await Promise.all(
+  const packDetails = await Promise.all(
     manifest.packs.map(async (entry) => {
       const artifactDir = artifactPath(rootPath, entry.storageKey, entry.artifactDigest);
       const artifactDigest = await calculateArtifactDigest(artifactDir);
@@ -157,6 +163,7 @@ async function verifyArtifactsAndSources(
           digest: practice.contentDigest,
         });
       }
+      return projection.pack;
     }),
   );
 
@@ -175,6 +182,7 @@ async function verifyArtifactsAndSources(
   if (expectedSources.size > 0) {
     throw new StoreRecoveryRequiredError("sealed projections contain sources absent from SQLite");
   }
+  return Object.freeze(packDetails);
 }
 
 /**
@@ -211,6 +219,7 @@ async function verifyColdOpenSnapshot(rootPath: string): Promise<ColdOpenResult>
         if (manifestB === undefined) {
           return {
             manifest: createEmptyManifest(),
+            packDetails: Object.freeze([]),
             effectivePractices: Object.freeze([]),
           };
         }
@@ -226,7 +235,11 @@ async function verifyColdOpenSnapshot(rootPath: string): Promise<ColdOpenResult>
       ) {
         const manifestB = await tryReadManifest(rootPath);
         if (manifestsEqual(manifestA, manifestB)) {
-          return { manifest: manifestA, effectivePractices: Object.freeze([]) };
+          return {
+            manifest: manifestA,
+            packDetails: Object.freeze([]),
+            effectivePractices: Object.freeze([]),
+          };
         }
         continue;
       }
@@ -250,8 +263,13 @@ async function verifyColdOpenSnapshot(rootPath: string): Promise<ColdOpenResult>
         );
       }
 
+      let packDetails: readonly PackSnapshot[];
       try {
-        await verifyArtifactsAndSources(rootPath, manifestA, snapshot.effectivePractices);
+        packDetails = await verifyArtifactsAndSources(
+          rootPath,
+          manifestA,
+          snapshot.effectivePractices,
+        );
       } catch (error) {
         const manifestB = await tryReadManifest(rootPath);
         if (!manifestsEqual(manifestA, manifestB)) continue;
@@ -260,7 +278,11 @@ async function verifyColdOpenSnapshot(rootPath: string): Promise<ColdOpenResult>
 
       const manifestB = await tryReadManifest(rootPath);
       if (!manifestsEqual(manifestA, manifestB)) continue;
-      return { manifest: manifestA, effectivePractices: snapshot.effectivePractices };
+      return {
+        manifest: manifestA,
+        packDetails,
+        effectivePractices: snapshot.effectivePractices,
+      };
     }
     throw new StoreBusyError("LocalStore changed repeatedly during cold open");
   } catch (error) {

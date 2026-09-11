@@ -1,31 +1,23 @@
 # Discover installed Packs with `lore list`
 
-`lore list` discovers the active Packs in the selected LocalStore. Use
-`lore list --pack <name>` to inspect the Practice summaries provided by one
-installed Pack, then pass a returned Practice ID to `lore get`. The contract is
-defined in [ADR 0014](../adr/0014-list-catalog-contract.md).
+`lore list` discovers the active Packs in the selected LocalStore. Use `lore list packs` when an integration needs Pack metadata, or use `lore list --pack <name>` to inspect the Practice summaries provided by one installed Pack, then pass a returned Practice ID to `lore get`. The contract is defined in [ADR 0014](../adr/0014-list-catalog-contract.md).
 
-This page documents the CLI/engine catalog contract. It assumes the caller
-already knows the Lorelum CLI entry point; it does not define automatic
-discovery of Lorelum or invocation by a Skill, Plugin, Hook, or MCP adapter.
+This page documents the CLI/engine catalog contract. It assumes the caller already knows the Lorelum CLI entry point; it does not define automatic discovery of Lorelum or invocation by a Skill, Plugin, Hook, or MCP adapter.
 
 ```sh
 lore list
+lore list packs
 lore list --pack agentic-coding
 lore get agentic-coding.testing.classify-failure-before-changing-test
 lore --store-root /path/to/isolated-store list
 lore describe list
 ```
 
-The global `--store-root` option can appear before or after the command. Relative
-paths resolve from the calling process's working directory. Omitting it selects
-the user Store. The CLI rejects a missing or empty value; other non-empty path
-strings are passed to LocalStore without a platform-specific path pre-check.
+The global `--store-root` option can appear before or after the command. Relative paths resolve from the calling process's working directory. Omitting it selects the user Store. The CLI rejects a missing or empty value; other non-empty path strings are passed to LocalStore without a platform-specific path pre-check.
 
-## Pack list
+## Pack catalog
 
-Without `--pack`, the protocol envelope contains `command: "list"`, `ok: true`,
-and:
+Without `--pack`, the protocol envelope contains `command: "list"`, `ok: true`, and:
 
 ```text
 data: {
@@ -37,15 +29,36 @@ data: {
 }
 ```
 
-Pack entries are sorted by `name`. `version` comes from the selected
-Store's verified active manifest. `practiceCount` counts effective Practices
-for which that Pack has a source claim. If multiple Packs provide the same
-Practice, each Pack counts it; the values therefore are not a global
-deduplicated Practice total.
+Pack entries are sorted by `name`. `version` comes from the selected Store's verified active manifest. `practiceCount` counts effective Practices for which that Pack has a source claim. If multiple Packs provide the same Practice, each Pack counts it; the values therefore are not a global deduplicated Practice total.
 
 A fresh Store is a successful response with `packs: []`.
 
-## Pack catalog
+## Rich Pack metadata
+
+With the positional `packs` selector, the envelope still has `command: "list"` and the response contains:
+
+```text
+data: {
+  generation,
+  effectiveRevision,
+  packs: [
+    {
+      name,
+      version,
+      description?,
+      appliesTo
+    }
+  ]
+}
+```
+
+This mode is intended for integrations that need to build a Pack index. `description` is a Pack-level field and is omitted when the Pack does not declare it. `appliesTo` is always an array. It is produced from the Engine field `applies_to`; a missing `applies_to` becomes `[]`, meaning that the Pack declares no technology-stack restriction.
+
+Rich metadata mode does not include `practiceCount`. Use bare `lore list` for the existing catalog count.
+
+Pack entries are sorted by exact `name`. The returned metadata comes from the verified sealed Pack projection through LocalStore; the CLI does not read Pack files, the manifest, or SQLite directly.
+
+## Practice catalog
 
 With `--pack`, the response contains:
 
@@ -60,16 +73,11 @@ data: {
 }
 ```
 
-Practice entries are limited to the summaries needed for discovery and are
-sorted by exact `id`. The returned `id` can be passed directly to `lore get`.
-Full Practice bodies, anti-patterns, and source details remain part of `get`.
-An installed Pack with zero Practices is successful and returns an empty
-`practices` array.
+Practice entries are limited to the summaries needed for discovery and are sorted by exact `id`. The returned `id` can be passed directly to `lore get`. Full Practice bodies, anti-patterns, and source details remain part of `get`. An installed Pack with zero Practices is successful and returns an empty `practices` array.
 
 ## Errors and exit codes
 
-Success exits `0`. Failures use `ok: false` with `error: { code, message }` and
-exit `2`. Both success and failure write exactly one JSON line to stdout.
+Success exits `0`. Failures use `ok: false` with `error: { code, message }` and exit `2`. Both success and failure write exactly one JSON line to stdout.
 
 | Code | Meaning |
 | --- | --- |
@@ -79,10 +87,6 @@ exit `2`. Both success and failure write exactly one JSON line to stdout.
 | `store.recovery-required` | The selected Store could not be opened and recovered normally. |
 | `runtime.unexpected` | An undeclared internal failure prevented completion. |
 
-Pack names are validated against the existing Pack format before the Store is
-opened. The `list.pack-not-found` message does not echo the supplied Pack name.
-Callers should branch on `error.code` rather than parsing `message`.
+Pack names are validated against the existing Pack format before the Store is opened. The `list.pack-not-found` message does not echo the supplied Pack name. Callers should branch on `error.code` rather than parsing `message`.
 
-`list` does not search remote Registries, perform semantic ranking, paginate,
-filter, or return complete Practice bodies. Use `lore query` for task-oriented
-retrieval and `lore get` for one complete Practice.
+`list` does not search remote Registries, perform semantic ranking, paginate, filter, or return complete Practice bodies. `lore list packs` is a selector of the existing `list` command, not a separate `list.packs` command. Use `lore query` for task-oriented retrieval and `lore get` for one complete Practice.

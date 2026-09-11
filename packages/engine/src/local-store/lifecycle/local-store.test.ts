@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { UnvalidatedPackInput } from "@lorelum/format";
+import type { Pack, UnvalidatedPackInput } from "@lorelum/format";
 
 import {
   createLocalStore,
@@ -46,9 +46,15 @@ async function withRoot(run: (root: StorageRoot) => Promise<void>): Promise<void
   }
 }
 
-function packInput(name: string, practices: Record<string, string>): UnvalidatedPackInput {
+type PackMetadata = Pick<Pack, "description" | "applies_to">;
+
+function packInput(
+  name: string,
+  practices: Record<string, string>,
+  metadata: PackMetadata = {},
+): UnvalidatedPackInput {
   return {
-    pack: { name, version: "1.0.0" },
+    pack: { name, version: "1.0.0", ...metadata },
     practices: Object.entries(practices).map(([id, body]) => ({
       id,
       title: id.split(".").pop(),
@@ -73,8 +79,12 @@ function sourcePaths(input: UnvalidatedPackInput): Record<string, string> {
   return paths;
 }
 
-function candidate(name: string, practices: Record<string, string>): PackCandidate {
-  const input = packInput(name, practices);
+function candidate(
+  name: string,
+  practices: Record<string, string>,
+  metadata: PackMetadata = {},
+): PackCandidate {
+  const input = packInput(name, practices, metadata);
   return createPackCandidate(input, sourcePaths(input)).candidate;
 }
 
@@ -125,6 +135,73 @@ test("open exposes minimal installed Pack summaries in manifest order", async ()
     ]);
     expect(Object.isFrozen(opened.packs)).toBe(true);
     expect(Object.isFrozen(opened.packs[0])).toBe(true);
+  });
+});
+
+test("readInstalledPackDetails returns verified Pack metadata without widening open summaries", async () => {
+  await withRoot(async (root) => {
+    const store = createLocalStore();
+    await store.install(
+      root,
+      candidate("platform", platform, {
+        description: "Platform engineering guidance.",
+        applies_to: ["typescript", "bun"],
+      }),
+    );
+    await store.install(root, candidate("web", web));
+
+    const details = await store.readInstalledPackDetails(root);
+    expect(details).toEqual({
+      generation: 2,
+      effectiveRevision: 2,
+      packs: [
+        {
+          name: "platform",
+          version: "1.0.0",
+          description: "Platform engineering guidance.",
+          applies_to: ["typescript", "bun"],
+        },
+        { name: "web", version: "1.0.0" },
+      ],
+    });
+    expect(Object.isFrozen(details)).toBe(true);
+    expect(Object.isFrozen(details.packs)).toBe(true);
+    expect(Object.isFrozen(details.packs[0])).toBe(true);
+    expect(Object.isFrozen(details.packs[0]?.applies_to)).toBe(true);
+
+    expect((await store.open(root)).packs).toEqual([
+      { name: "platform", version: "1.0.0" },
+      { name: "web", version: "1.0.0" },
+    ]);
+  });
+});
+
+test("readInstalledPackDetails rejects tampered sealed Pack metadata", async () => {
+  await withRoot(async (root) => {
+    const store = createLocalStore();
+    await store.install(
+      root,
+      candidate("platform", platform, {
+        description: "Platform engineering guidance.",
+        applies_to: ["typescript", "bun"],
+      }),
+    );
+
+    const entry = (await readManifest(root.rootPath)).packs[0]!;
+    const projectionPath = join(
+      artifactPath(root.rootPath, entry.storageKey, entry.artifactDigest),
+      ".lorelum",
+      "local-store-projection.json",
+    );
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      pack: { description?: string };
+    };
+    projection.pack.description = "Tampered metadata.";
+    await writeFile(projectionPath, JSON.stringify(projection) + "\n", "utf8");
+
+    await expect(store.readInstalledPackDetails(root)).rejects.toBeInstanceOf(
+      StoreRecoveryRequiredError,
+    );
   });
 });
 

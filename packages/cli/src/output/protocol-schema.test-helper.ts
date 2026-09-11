@@ -39,6 +39,12 @@ function validate(value: unknown, schema: JsonSchema, path: string): string[] {
 
   if (schema.type === "array") {
     if (!Array.isArray(value)) return [`${path} must be an array`];
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      return [`${path} must contain at least ${schema.minItems} items`];
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      return [`${path} must contain at most ${schema.maxItems} items`];
+    }
     return schema.items === undefined
       ? []
       : value.flatMap((item, index) => validate(item, schema.items!, `${path}[${index}]`));

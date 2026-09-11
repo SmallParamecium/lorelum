@@ -14,6 +14,8 @@ export type JsonSchema = {
   required?: readonly string[];
   properties?: Readonly<Record<string, JsonSchema>>;
   items?: JsonSchema;
+  minItems?: number;
+  maxItems?: number;
 };
 
 export type JsonValue =

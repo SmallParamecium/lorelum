@@ -1,7 +1,10 @@
 import type { EffectivePractice } from "../local-store/index.js";
 import type {
   ListedPack,
+  ListedPackDetails,
   ListedPractice,
+  RetrievePackDetailsInput,
+  RetrievePackDetailsResult,
   RetrievePackPracticesInput,
   RetrievePackPracticesResult,
   RetrievePacksInput,
@@ -33,6 +36,15 @@ function projectPractice(effectivePractice: EffectivePractice): ListedPractice {
   });
 }
 
+function projectPackDetails(pack: ListedPackDetails): ListedPackDetails {
+  return Object.freeze({
+    name: pack.name,
+    version: pack.version,
+    ...(pack.description === undefined ? {} : { description: pack.description }),
+    ...(pack.applies_to === undefined ? {} : { applies_to: Object.freeze([...pack.applies_to]) }),
+  });
+}
+
 /** Project the active manifest into the `lore list` Pack catalog. */
 export function retrievePacks(input: RetrievePacksInput): RetrievePacksResult {
   const counts = practiceCountsByPack(input.effectivePractices);
@@ -44,6 +56,14 @@ export function retrievePacks(input: RetrievePacksInput): RetrievePacksResult {
         practiceCount: counts.get(pack.name) ?? 0,
       }),
     )
+    .sort((left, right) => compareCodeUnits(left.name, right.name));
+  return Object.freeze({ packs: Object.freeze(packs) });
+}
+
+/** Project verified Pack metadata into the rich Pack catalog. */
+export function retrievePackDetails(input: RetrievePackDetailsInput): RetrievePackDetailsResult {
+  const packs = input.packs
+    .map(projectPackDetails)
     .sort((left, right) => compareCodeUnits(left.name, right.name));
   return Object.freeze({ packs: Object.freeze(packs) });
 }

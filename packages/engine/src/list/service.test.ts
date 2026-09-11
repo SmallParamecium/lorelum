@@ -9,6 +9,7 @@ import {
   StoreBusyError,
   StoreRecoveryRequiredError,
   type LocalStore,
+  type InstalledPackDetailsResult,
   type OpenResult,
   type StorageRoot,
 } from "../local-store/index.js";
@@ -33,7 +34,16 @@ async function writeLocalListPack(directory: string): Promise<string> {
   const packRoot = join(directory, "local-list-pack");
   const practices = join(packRoot, "practices", "react");
   await mkdir(practices, { recursive: true });
-  await writeFile(join(packRoot, "pack.yaml"), "name: local-list-fixture\nversion: 0.1.0\n");
+  await writeFile(
+    join(packRoot, "pack.yaml"),
+    [
+      "name: local-list-fixture",
+      "version: 0.1.0",
+      "description: Local list service fixture.",
+      "applies_to: [react, typescript]",
+      "",
+    ].join("\n"),
+  );
   await writeFile(
     join(practices, "z-api.md"),
     [
@@ -67,9 +77,17 @@ async function writeLocalListPack(directory: string): Promise<string> {
   return packRoot;
 }
 
-function fakeStore(open: OpenResult): Pick<LocalStore, "open"> {
+function fakeStore(
+  open: OpenResult,
+  details: InstalledPackDetailsResult = {
+    generation: open.generation,
+    effectiveRevision: open.effectiveRevision,
+    packs: open.packs,
+  },
+): Pick<LocalStore, "open" | "readInstalledPackDetails"> {
   return {
     open: async () => open,
+    readInstalledPackDetails: async () => details,
   };
 }
 
@@ -114,6 +132,24 @@ test("ListService reads the Pack catalog and a selected Pack through LocalStore"
     expect(Object.isFrozen(practicesResult.pack)).toBe(true);
     expect(Object.isFrozen(practicesResult.practices)).toBe(true);
     expect(Object.isFrozen(practicesResult.practices[0])).toBe(true);
+
+    const detailsResult = await service.listPackDetails();
+    expect(detailsResult).toEqual({
+      generation: 1,
+      effectiveRevision: 1,
+      packs: [
+        {
+          name: "local-list-fixture",
+          version: "0.1.0",
+          description: "Local list service fixture.",
+          applies_to: ["react", "typescript"],
+        },
+      ],
+    });
+    expect(Object.isFrozen(detailsResult)).toBe(true);
+    expect(Object.isFrozen(detailsResult.packs)).toBe(true);
+    expect(Object.isFrozen(detailsResult.packs[0])).toBe(true);
+    expect(Object.isFrozen(detailsResult.packs[0]?.applies_to)).toBe(true);
   } finally {
     await removeStoreRoot(directory);
   }
@@ -134,7 +170,21 @@ test("ListService honors a per-call storageRoot override", async () => {
       generation: 1,
       packs: [{ name: "local-list-fixture", practiceCount: 2 }],
     });
+    await expect(service.listPackDetails({ storageRoot: overrideRoot })).resolves.toMatchObject({
+      generation: 1,
+      packs: [
+        {
+          name: "local-list-fixture",
+          description: "Local list service fixture.",
+          applies_to: ["react", "typescript"],
+        },
+      ],
+    });
     await expect(service.list()).resolves.toMatchObject({
+      generation: 0,
+      packs: [],
+    });
+    await expect(service.listPackDetails()).resolves.toMatchObject({
       generation: 0,
       packs: [],
     });
@@ -174,7 +224,7 @@ test("ListService maps missing and blank Pack names to UnknownPackError", async 
 test("ListService propagates LocalStore busy and recovery failures", async () => {
   /* eslint-disable no-await-in-loop -- each error case asserts both sequential call sites. */
   for (const error of [new StoreBusyError("busy"), new StoreRecoveryRequiredError("recovery")]) {
-    const store: Pick<LocalStore, "open"> = {
+    const store: Pick<LocalStore, "open" | "readInstalledPackDetails"> = {
       ...fakeStore({
         generation: 0,
         effectiveRevision: 0,
@@ -184,11 +234,15 @@ test("ListService propagates LocalStore busy and recovery failures", async () =>
       open: async () => {
         throw error;
       },
+      readInstalledPackDetails: async () => {
+        throw error;
+      },
     };
     await expect(createListService({ store }).list()).rejects.toBe(error);
     await expect(createListService({ store }).listPack({ packName: "platform" })).rejects.toBe(
       error,
     );
+    await expect(createListService({ store }).listPackDetails()).rejects.toBe(error);
   }
   /* eslint-enable no-await-in-loop */
 });

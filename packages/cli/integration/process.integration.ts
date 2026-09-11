@@ -92,12 +92,20 @@ try {
  */
 async function exerciseGet(compiledBinary: string, workingDirectory: string): Promise<void> {
   const packDirectory = join(workingDirectory, "fixture-pack");
+  const minimalPackDirectory = join(workingDirectory, "minimal-pack");
   const storageRoot = join(workingDirectory, "fixture-store");
   const practiceId = "integration.retrieval.demo";
   await mkdir(join(packDirectory, "practices"), { recursive: true });
+  await mkdir(join(minimalPackDirectory, "practices"), { recursive: true });
   await writeFile(
     join(packDirectory, "pack.yaml"),
-    "name: integration-pack\nversion: 1.0.0\ndescription: Process integration fixture.\n",
+    [
+      "name: integration-pack",
+      "version: 1.0.0",
+      "description: Process integration fixture.",
+      "applies_to: [bun, typescript]",
+      "",
+    ].join("\n"),
   );
   await writeFile(
     join(packDirectory, "practices", "chinese-query.md"),
@@ -131,17 +139,39 @@ anti_patterns:
 This complete body must survive installation and retrieval.
 `,
   );
+  await writeFile(join(minimalPackDirectory, "pack.yaml"), "name: minimal-pack\nversion: 1.0.0\n");
+  await writeFile(
+    join(minimalPackDirectory, "practices", "guidance.md"),
+    `---
+id: integration.minimal.guidance
+title: Minimal integration guidance
+stage: integration
+tech_stack: [typescript]
+applies_when: checking a Pack without optional metadata
+---
+Optional Pack metadata is intentionally omitted.
+`,
+  );
 
   const engineEntrypoint = join(import.meta.dir, "../../engine/src/index.ts");
   const installer = `
 const { decodePackDirectory, createLocalStore } = await import(${JSON.stringify(engineEntrypoint)});
 const decoded = await decodePackDirectory(${JSON.stringify(packDirectory)});
+const minimal = await decodePackDirectory(${JSON.stringify(minimalPackDirectory)});
 const result = await createLocalStore().install(
   { rootPath: ${JSON.stringify(storageRoot)} },
   decoded.candidate,
   decoded.diagnostics,
 );
-console.log(JSON.stringify({ generation: result.generation, effectiveRevision: result.effectiveRevision }));
+const second = await createLocalStore().install(
+  { rootPath: ${JSON.stringify(storageRoot)} },
+  minimal.candidate,
+  minimal.diagnostics,
+);
+console.log(JSON.stringify({
+  generation: second.generation,
+  effectiveRevision: second.effectiveRevision,
+}));
 `;
   const installed = await runProcess([bunExecutable!, "-e", installer]);
   assert.equal(installed.exitCode, 0, installed.stderr || installed.stdout);
@@ -157,6 +187,30 @@ console.log(JSON.stringify({ generation: result.generation, effectiveRevision: r
   assert(isRecord(listedResponse.data));
   assert.deepEqual(listedResponse.data.packs, [
     { name: "integration-pack", version: "1.0.0", practiceCount: 2 },
+    { name: "minimal-pack", version: "1.0.0", practiceCount: 1 },
+  ]);
+
+  const listedPackDetails = await runList(compiledBinary, storageRoot, undefined, "packs");
+  assert.equal(listedPackDetails.exitCode, 0);
+  assert.equal(listedPackDetails.stderr, "");
+  const listedPackDetailsResponse = parseSingleResponse(listedPackDetails.stdout);
+  assert.equal(listedPackDetailsResponse.command, "list");
+  assert.equal(listedPackDetailsResponse.ok, true);
+  const pluginSummary = parsePluginSummaryEquivalent(listedPackDetailsResponse);
+  assert.equal(pluginSummary.continue, false);
+  if (pluginSummary.continue) throw new Error("equivalent Plugin parser entered degraded mode");
+  assert.deepEqual(pluginSummary.packs, [
+    {
+      name: "integration-pack",
+      version: "1.0.0",
+      description: "Process integration fixture.",
+      appliesTo: ["bun", "typescript"],
+    },
+    {
+      name: "minimal-pack",
+      version: "1.0.0",
+      appliesTo: [],
+    },
   ]);
 
   const listedPack = await runList(compiledBinary, storageRoot, "integration-pack");
@@ -329,11 +383,58 @@ async function runList(
   binaryPath: string,
   storageRoot: string,
   packName?: string,
+  scope?: "packs",
 ): Promise<{ exitCode: number; stderr: string; stdout: string }> {
   const args = [binaryPath, "list"];
+  if (scope !== undefined) args.push(scope);
   if (packName !== undefined) args.push("--pack", packName);
   args.push("--store-root", storageRoot);
   return runProcess(args);
+}
+
+interface PluginPackSummary {
+  name: string;
+  version: string;
+  description?: string;
+  appliesTo: readonly string[];
+}
+
+type PluginSummaryParseResult =
+  | { continue: true }
+  | { continue: false; packs: readonly PluginPackSummary[] };
+
+/**
+ * Equivalent to the consuming Plugin's summary parser contract. The actual
+ * Plugin is hosted outside this repository, so integration must still enforce
+ * the same required fields and degraded fallback locally.
+ */
+function parsePluginSummaryEquivalent(response: Record<string, unknown>): PluginSummaryParseResult {
+  if (response.command !== "list" || response.ok !== true || !isRecord(response.data)) {
+    return { continue: true };
+  }
+  const rawPacks = response.data.packs;
+  if (!Array.isArray(rawPacks)) return { continue: true };
+
+  const packs: PluginPackSummary[] = [];
+  for (const rawPack of rawPacks) {
+    if (
+      !isRecord(rawPack) ||
+      typeof rawPack.name !== "string" ||
+      typeof rawPack.version !== "string" ||
+      !Array.isArray(rawPack.appliesTo) ||
+      rawPack.appliesTo.some((value) => typeof value !== "string") ||
+      (rawPack.description !== undefined && typeof rawPack.description !== "string")
+    ) {
+      return { continue: true };
+    }
+    packs.push({
+      name: rawPack.name,
+      version: rawPack.version,
+      ...(rawPack.description === undefined ? {} : { description: rawPack.description }),
+      appliesTo: rawPack.appliesTo,
+    });
+  }
+  return { continue: false, packs };
 }
 
 function parseSingleResponse(stdout: string): Record<string, unknown> {

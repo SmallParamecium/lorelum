@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import type { EffectivePractice, InstalledPackSummary } from "../local-store/index.js";
-import { retrievePackPractices, retrievePacks } from "./retrieve.js";
+import type {
+  EffectivePractice,
+  InstalledPackDetails,
+  InstalledPackSummary,
+} from "../local-store/index.js";
+import { retrievePackDetails, retrievePackPractices, retrievePacks } from "./retrieve.js";
 
 function effectivePractice(
   id: string,
@@ -41,6 +45,16 @@ const packs: readonly InstalledPackSummary[] = [
   { name: "empty-pack", version: "0.3.0" },
 ];
 
+const packDetails: readonly InstalledPackDetails[] = [
+  {
+    name: "zeta",
+    version: "0.2.0",
+    description: "Zeta guidance",
+    applies_to: ["typescript"],
+  },
+  { name: "alpha", version: "0.1.0" },
+];
+
 describe("retrievePacks", () => {
   test("counts Practices by source claim and sorts Packs by name", () => {
     const packsWithExtras = [
@@ -65,6 +79,28 @@ describe("retrievePacks", () => {
     ]);
     expect(Object.isFrozen(result.packs)).toBe(true);
     expect("storageKey" in result.packs[0]!).toBe(false);
+  });
+});
+
+describe("retrievePackDetails", () => {
+  test("projects and sorts Pack metadata while preserving optional fields", () => {
+    const result = retrievePackDetails({ packs: packDetails });
+
+    expect(result).toEqual({
+      packs: [
+        { name: "alpha", version: "0.1.0" },
+        {
+          name: "zeta",
+          version: "0.2.0",
+          description: "Zeta guidance",
+          applies_to: ["typescript"],
+        },
+      ],
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.packs)).toBe(true);
+    expect(Object.isFrozen(result.packs[0])).toBe(true);
+    expect(Object.isFrozen(result.packs[1]?.applies_to)).toBe(true);
   });
 });
 

@@ -10,6 +10,8 @@ export {
   type LocalStore,
   type OpenResult,
   type InstalledPackSummary,
+  type InstalledPackDetails,
+  type InstalledPackDetailsResult,
   type StorageRoot,
   type StoreSnapshotIdentity,
   type EffectivePracticeSnapshot,
