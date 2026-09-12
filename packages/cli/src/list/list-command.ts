@@ -1,5 +1,7 @@
 import type {
   ListPackDetailsResult,
+  ListPackPracticesResult,
+  ListPacksResult,
   ListServiceWithPackDetails,
   StorageRoot,
 } from "@lorelum/engine";
@@ -109,6 +111,18 @@ const resultSchema: JsonSchema = {
   oneOf: [packListSchema, richPackListSchema, emptyPackListSchema, practiceCatalogSchema],
 };
 
+function toPackListData(result: ListPacksResult): JsonValue {
+  return {
+    generation: result.generation,
+    effectiveRevision: result.effectiveRevision,
+    packs: result.packs.map((pack) => ({
+      name: pack.name,
+      version: pack.version,
+      practiceCount: pack.practiceCount,
+    })),
+  };
+}
+
 function toRichPackListData(result: ListPackDetailsResult): JsonValue {
   return {
     generation: result.generation,
@@ -118,6 +132,19 @@ function toRichPackListData(result: ListPackDetailsResult): JsonValue {
       version: pack.version,
       ...(pack.description === undefined ? {} : { description: pack.description }),
       appliesTo: [...(pack.applies_to ?? [])],
+    })),
+  };
+}
+
+function toPracticeCatalogData(result: ListPackPracticesResult): JsonValue {
+  return {
+    generation: result.generation,
+    effectiveRevision: result.effectiveRevision,
+    pack: { name: result.pack.name, version: result.pack.version },
+    practices: result.practices.map((practice) => ({
+      id: practice.id,
+      title: practice.title,
+      applies_when: practice.applies_when,
     })),
   };
 }
@@ -156,13 +183,15 @@ export function createListCommand(services: ListCommandServices): CommandDefinit
       );
 
       try {
-        const result =
-          scope === "packs"
-            ? toRichPackListData(await services.list.listPackDetails({ storageRoot }))
-            : packName === undefined
-              ? await services.list.list({ storageRoot })
-              : await services.list.listPack({ packName, storageRoot });
-        return { data: result as unknown as JsonValue };
+        if (scope === "packs") {
+          return { data: toRichPackListData(await services.list.listPackDetails({ storageRoot })) };
+        }
+        if (packName === undefined) {
+          return { data: toPackListData(await services.list.list({ storageRoot })) };
+        }
+        return {
+          data: toPracticeCatalogData(await services.list.listPack({ packName, storageRoot })),
+        };
       } catch (error) {
         throwListVisibleError(error);
       }

@@ -1,44 +1,57 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const entrypoint = join(import.meta.dir, "../src/main.ts");
-const bunExecutable = Bun.which("bun");
-const processTimeoutMs = 60_000;
+import { createInstalledPacksFixture } from "./fixtures/installed-packs.js";
+import { verifyGetAndQueryScenario } from "./scenarios/get-query.js";
+import { verifyListPacksScenario } from "./scenarios/list-packs.js";
+import { runProcess } from "./support/process.js";
+import { selectProtocolFields } from "./support/protocol.js";
 
-if (bunExecutable === null) {
-  throw new Error("Bun executable is required for CLI integration tests.");
+const entrypoint = join(import.meta.dir, "../src/main.ts");
+
+async function main(): Promise<void> {
+  const bunExecutable = Bun.which("bun");
+  if (bunExecutable === null)
+    throw new Error("Bun executable is required for CLI integration tests.");
+
+  await verifySourceEntrypoint(bunExecutable);
+  const directory = await mkdtemp(join(tmpdir(), "lorelum-cli-"));
+  try {
+    const executable = join(directory, process.platform === "win32" ? "lore.exe" : "lore");
+    await compileCli(bunExecutable, executable);
+    await verifyCompiledEntrypoint(executable, directory);
+
+    const fixture = await createInstalledPacksFixture(directory);
+    await verifyListPacksScenario(executable, fixture, directory);
+    await verifyGetAndQueryScenario(executable, fixture, directory);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
 }
 
-await assert.rejects(
-  runProcess([bunExecutable, "-e", "setInterval(() => undefined, 1_000);"], 100),
-  /Process timed out after 100 ms:/,
-);
+async function verifySourceEntrypoint(bunExecutable: string): Promise<void> {
+  const source = await runProcess([bunExecutable, entrypoint, "--version"]);
+  assert.equal(source.exitCode, 0);
+  assert.deepEqual(selectProtocolFields(source.stdout), { command: "version", ok: true });
+  assert.equal(source.stderr, "");
 
-const source = await runProcess([bunExecutable, entrypoint, "--version"]);
-assert.equal(source.exitCode, 0);
-assert.deepEqual(selectProtocolFields(source.stdout), { command: "version", ok: true });
-assert.equal(source.stderr, "");
+  const hiddenWithoutGrant = await runProcess([
+    bunExecutable,
+    entrypoint,
+    "--internal-backend-serve",
+  ]);
+  assert.equal(hiddenWithoutGrant.exitCode, 2);
+  assert.deepEqual(selectProtocolFields(hiddenWithoutGrant.stdout), {
+    command: "unknown",
+    errorCode: "usage.invalid",
+    ok: false,
+  });
+  assert.equal(hiddenWithoutGrant.stderr, "");
+}
 
-const hiddenWithoutGrant = await runProcess([
-  bunExecutable,
-  entrypoint,
-  "--internal-backend-serve",
-]);
-assert.equal(hiddenWithoutGrant.exitCode, 2);
-assert.deepEqual(selectProtocolFields(hiddenWithoutGrant.stdout), {
-  command: "unknown",
-  errorCode: "usage.invalid",
-  ok: false,
-});
-assert.equal(hiddenWithoutGrant.stderr, "");
-
-const directory = await mkdtemp(join(tmpdir(), "lorelum-cli-"));
-const executable = join(directory, process.platform === "win32" ? "lore.exe" : "lore");
-
-try {
+async function compileCli(bunExecutable: string, executable: string): Promise<void> {
   const build = await runProcess([
     bunExecutable,
     "build",
@@ -47,8 +60,10 @@ try {
     "--outfile",
     executable,
   ]);
-  assert.equal(build.exitCode, 0);
+  assert.equal(build.exitCode, 0, build.stderr || build.stdout);
+}
 
+async function verifyCompiledEntrypoint(executable: string, directory: string): Promise<void> {
   const binary = await runProcess([executable, "--version"]);
   assert.equal(binary.exitCode, 0);
   assert.deepEqual(selectProtocolFields(binary.stdout), { command: "version", ok: true });
@@ -80,439 +95,6 @@ try {
   });
   assert.equal(invalid.stdout.includes("private-token"), false);
   assert.equal(invalid.stderr, "");
-
-  await exerciseGet(executable, directory);
-} finally {
-  await rm(directory, { force: true, recursive: true });
 }
 
-/**
- * Install one synthetic Pack through the public engine API in a separate
- * process, then verify the compiled CLI reads the persisted snapshot.
- */
-async function exerciseGet(compiledBinary: string, workingDirectory: string): Promise<void> {
-  const packDirectory = join(workingDirectory, "fixture-pack");
-  const minimalPackDirectory = join(workingDirectory, "minimal-pack");
-  const storageRoot = join(workingDirectory, "fixture-store");
-  const practiceId = "integration.retrieval.demo";
-  await mkdir(join(packDirectory, "practices"), { recursive: true });
-  await mkdir(join(minimalPackDirectory, "practices"), { recursive: true });
-  await writeFile(
-    join(packDirectory, "pack.yaml"),
-    [
-      "name: integration-pack",
-      "version: 1.0.0",
-      "description: Process integration fixture.",
-      "applies_to: [bun, typescript]",
-      "",
-    ].join("\n"),
-  );
-  await writeFile(
-    join(packDirectory, "practices", "chinese-query.md"),
-    `---
-id: integration.retrieval.chinese
-title: 中文认证接口
-stage: integration
-tech_stack: [react, typescript]
-applies_when: 在 React 页面接入认证接口时
----
-# 中文检索
-
-通过现有认证接口完成页面请求。
-`,
-  );
-  await writeFile(
-    join(packDirectory, "practices", "retrieval-demo.md"),
-    `---
-id: ${practiceId}
-title: Persisted retrieval demo
-stage: integration
-tech_stack: [bun, typescript]
-applies_when: exercising the compiled get command
-anti_patterns:
-  - id: integration.retrieval.skip
-    name: Skip persisted state
-    description: Do not bypass the local snapshot.
----
-# Persisted guidance
-
-This complete body must survive installation and retrieval.
-`,
-  );
-  await writeFile(join(minimalPackDirectory, "pack.yaml"), "name: minimal-pack\nversion: 1.0.0\n");
-  await writeFile(
-    join(minimalPackDirectory, "practices", "guidance.md"),
-    `---
-id: integration.minimal.guidance
-title: Minimal integration guidance
-stage: integration
-tech_stack: [typescript]
-applies_when: checking a Pack without optional metadata
----
-Optional Pack metadata is intentionally omitted.
-`,
-  );
-
-  const engineEntrypoint = join(import.meta.dir, "../../engine/src/index.ts");
-  const installer = `
-const { decodePackDirectory, createLocalStore } = await import(${JSON.stringify(engineEntrypoint)});
-const decoded = await decodePackDirectory(${JSON.stringify(packDirectory)});
-const minimal = await decodePackDirectory(${JSON.stringify(minimalPackDirectory)});
-const result = await createLocalStore().install(
-  { rootPath: ${JSON.stringify(storageRoot)} },
-  decoded.candidate,
-  decoded.diagnostics,
-);
-const second = await createLocalStore().install(
-  { rootPath: ${JSON.stringify(storageRoot)} },
-  minimal.candidate,
-  minimal.diagnostics,
-);
-console.log(JSON.stringify({
-  generation: second.generation,
-  effectiveRevision: second.effectiveRevision,
-}));
-`;
-  const installed = await runProcess([bunExecutable!, "-e", installer]);
-  assert.equal(installed.exitCode, 0, installed.stderr || installed.stdout);
-  assert.equal(installed.stderr, "");
-  assert.equal(installed.stdout.trim().split(/\r?\n/).length, 1);
-
-  const listed = await runList(compiledBinary, storageRoot);
-  assert.equal(listed.exitCode, 0);
-  assert.equal(listed.stderr, "");
-  const listedResponse = parseSingleResponse(listed.stdout);
-  assert.equal(listedResponse.command, "list");
-  assert.equal(listedResponse.ok, true);
-  assert(isRecord(listedResponse.data));
-  assert.deepEqual(listedResponse.data.packs, [
-    { name: "integration-pack", version: "1.0.0", practiceCount: 2 },
-    { name: "minimal-pack", version: "1.0.0", practiceCount: 1 },
-  ]);
-
-  const listedPackDetails = await runList(compiledBinary, storageRoot, undefined, "packs");
-  assert.equal(listedPackDetails.exitCode, 0);
-  assert.equal(listedPackDetails.stderr, "");
-  const listedPackDetailsResponse = parseSingleResponse(listedPackDetails.stdout);
-  assert.equal(listedPackDetailsResponse.command, "list");
-  assert.equal(listedPackDetailsResponse.ok, true);
-  const pluginSummary = parsePluginSummaryEquivalent(listedPackDetailsResponse);
-  assert.equal(pluginSummary.continue, false);
-  if (pluginSummary.continue) throw new Error("equivalent Plugin parser entered degraded mode");
-  assert.deepEqual(pluginSummary.packs, [
-    {
-      name: "integration-pack",
-      version: "1.0.0",
-      description: "Process integration fixture.",
-      appliesTo: ["bun", "typescript"],
-    },
-    {
-      name: "minimal-pack",
-      version: "1.0.0",
-      appliesTo: [],
-    },
-  ]);
-
-  const listedPack = await runList(compiledBinary, storageRoot, "integration-pack");
-  assert.equal(listedPack.exitCode, 0);
-  assert.equal(listedPack.stderr, "");
-  const listedPackResponse = parseSingleResponse(listedPack.stdout);
-  assert.equal(listedPackResponse.command, "list");
-  assert.equal(listedPackResponse.ok, true);
-  assert(isRecord(listedPackResponse.data));
-  assert.deepEqual(listedPackResponse.data.pack, {
-    name: "integration-pack",
-    version: "1.0.0",
-  });
-  assert(Array.isArray(listedPackResponse.data.practices));
-  const listedPractice = listedPackResponse.data.practices.find(
-    (value) => isRecord(value) && value.id === practiceId,
-  );
-  assert(isRecord(listedPractice));
-  const listedPracticeId = String(listedPractice.id);
-
-  const first = await runGet(compiledBinary, listedPracticeId, storageRoot);
-  assert.equal(first.exitCode, 0);
-  assert.equal(first.stderr, "");
-  const firstResponse = parseSingleResponse(first.stdout);
-  assert.equal(firstResponse.command, "get");
-  assert.equal(firstResponse.ok, true);
-  assert(isRecord(firstResponse.data));
-  assert(isRecord(firstResponse.data.practice));
-  assert.deepEqual(firstResponse.data.practice, {
-    id: practiceId,
-    title: "Persisted retrieval demo",
-    stage: "integration",
-    tech_stack: ["bun", "typescript"],
-    applies_when: "exercising the compiled get command",
-    severity: "warn",
-    body: "# Persisted guidance\n\nThis complete body must survive installation and retrieval.\n",
-    anti_patterns: [
-      {
-        id: "integration.retrieval.skip",
-        name: "Skip persisted state",
-        description: "Do not bypass the local snapshot.",
-        severity: "warn",
-      },
-    ],
-  });
-  assert.equal(typeof firstResponse.data.practice.body, "string");
-  assert.match(String(firstResponse.data.contentDigest), /^[0-9a-f]{64}$/);
-  assert.deepEqual(firstResponse.data.sources, [
-    { packName: "integration-pack", sourcePath: "practices/retrieval-demo.md" },
-  ]);
-
-  const firstStdout = first.stdout;
-
-  const keyword = await runQuery(compiledBinary, "retrieval OR", storageRoot, 3);
-  assert.equal(keyword.exitCode, 0);
-  assert.equal(keyword.stderr, "");
-  const keywordResponse = parseSingleResponse(keyword.stdout);
-  assert.equal(keywordResponse.command, "query");
-  assert.equal(keywordResponse.ok, true);
-  assert(isRecord(keywordResponse.data));
-  assert.equal(keywordResponse.data.mode, "keyword");
-  assert(Array.isArray(keywordResponse.data.results));
-  const keywordHit = keywordResponse.data.results.find(
-    (value) => isRecord(value) && value.practiceId === practiceId,
-  );
-  assert(isRecord(keywordHit));
-  const queriedGet = await runGet(compiledBinary, String(keywordHit.practiceId), storageRoot);
-  assert.equal(queriedGet.exitCode, 0);
-  const queriedGetResponse = parseSingleResponse(queriedGet.stdout);
-  assert.equal(queriedGetResponse.ok, true);
-  assert(isRecord(queriedGetResponse.data));
-  assert.equal(keywordHit.contentDigest, queriedGetResponse.data.contentDigest);
-  assert.equal(queriedGetResponse.data.contentDigest, firstResponse.data.contentDigest);
-
-  const chinese = await runQuery(compiledBinary, "认证接口", storageRoot, 5);
-  assert.equal(chinese.exitCode, 0);
-  assert.equal(chinese.stderr, "");
-  const chineseResponse = parseSingleResponse(chinese.stdout);
-  assert.equal(chineseResponse.ok, true);
-  assert(isRecord(chineseResponse.data));
-  assert(Array.isArray(chineseResponse.data.results));
-  assert(
-    chineseResponse.data.results.some(
-      (value) => isRecord(value) && value.practiceId === "integration.retrieval.chinese",
-    ),
-  );
-
-  const noMatches = await runQuery(compiledBinary, "zzzxylophone", storageRoot);
-  assert.equal(noMatches.exitCode, 0);
-  const noMatchesResponse = parseSingleResponse(noMatches.stdout);
-  assert.equal(noMatchesResponse.ok, true);
-  assert(isRecord(noMatchesResponse.data));
-  assert.deepEqual(noMatchesResponse.data.results, []);
-
-  const second = await runGet(compiledBinary, practiceId, storageRoot, "before");
-  assert.equal(second.exitCode, 0);
-  assert.equal(second.stdout, firstStdout);
-  const third = await runGet(compiledBinary, practiceId, storageRoot, "after");
-  assert.equal(third.exitCode, 0);
-  assert.equal(third.stdout, firstStdout);
-
-  const absent = await runGet(compiledBinary, "integration.retrieval.absent", storageRoot);
-  assert.equal(absent.exitCode, 2);
-  assert.equal(absent.stderr, "");
-  const absentResponse = parseSingleResponse(absent.stdout);
-  assert.equal(absentResponse.ok, false);
-  assert.equal(isRecord(absentResponse.error) && absentResponse.error.code, "practice.not-found");
-
-  const isolatedRoot = join(workingDirectory, "isolated-store");
-  await mkdir(isolatedRoot, { recursive: true });
-  const isolated = await runGet(compiledBinary, practiceId, isolatedRoot);
-  assert.equal(isolated.exitCode, 2);
-  const isolatedResponse = parseSingleResponse(isolated.stdout);
-  assert.equal(
-    isRecord(isolatedResponse.error) && isolatedResponse.error.code,
-    "practice.not-found",
-  );
-
-  const malformedRoot = join(workingDirectory, "malformed-store");
-  const malformed = await runGet(compiledBinary, "invalid-id", malformedRoot);
-  assert.equal(malformed.exitCode, 2);
-  assert.equal(malformed.stderr, "");
-  const malformedResponse = parseSingleResponse(malformed.stdout);
-  assert.equal(malformedResponse.ok, false);
-  assert.equal(isRecord(malformedResponse.error) && malformedResponse.error.code, "usage.invalid");
-  assert.equal(existsSync(malformedRoot), false, "malformed IDs must not create a Store root");
-
-  const emptyStoreRoot = join(workingDirectory, "empty-list-store");
-  const emptyList = await runList(compiledBinary, emptyStoreRoot);
-  assert.equal(emptyList.exitCode, 0);
-  const emptyListResponse = parseSingleResponse(emptyList.stdout);
-  assert.equal(emptyListResponse.ok, true);
-  assert(isRecord(emptyListResponse.data));
-  assert.deepEqual(emptyListResponse.data.packs, []);
-
-  const emptyPackDetails = await runList(compiledBinary, emptyStoreRoot, undefined, "packs");
-  assert.equal(emptyPackDetails.exitCode, 0);
-  assert.equal(emptyPackDetails.stderr, "");
-  const emptyPackDetailsResponse = parseSingleResponse(emptyPackDetails.stdout);
-  assert.equal(emptyPackDetailsResponse.ok, true);
-  const emptyPluginSummary = parsePluginSummaryEquivalent(emptyPackDetailsResponse);
-  assert.equal(emptyPluginSummary.continue, false);
-  if (emptyPluginSummary.continue) {
-    throw new Error("equivalent Plugin parser entered degraded mode for an empty Store");
-  }
-  assert.deepEqual(emptyPluginSummary.packs, []);
-
-  const missingPack = await runList(compiledBinary, storageRoot, "missing-pack");
-  assert.equal(missingPack.exitCode, 2);
-  const missingPackResponse = parseSingleResponse(missingPack.stdout);
-  assert.equal(missingPackResponse.ok, false);
-  assert.equal(
-    isRecord(missingPackResponse.error) && missingPackResponse.error.code,
-    "list.pack-not-found",
-  );
-}
-
-async function runGet(
-  binaryPath: string,
-  practiceId: string,
-  storageRoot: string,
-  globalPosition: "before" | "after" = "after",
-): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  const args =
-    globalPosition === "before"
-      ? [binaryPath, "--store-root", storageRoot, "get", practiceId]
-      : [binaryPath, "get", practiceId, "--store-root", storageRoot];
-  return runProcess(args);
-}
-
-async function runQuery(
-  binaryPath: string,
-  text: string,
-  storageRoot: string,
-  topK?: number,
-): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  const args = [binaryPath, "query", text, "--store-root", storageRoot];
-  if (topK !== undefined) args.push("--top-k", String(topK));
-  return runProcess(args);
-}
-
-async function runList(
-  binaryPath: string,
-  storageRoot: string,
-  packName?: string,
-  scope?: "packs",
-): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  const args = [binaryPath, "list"];
-  if (scope !== undefined) args.push(scope);
-  if (packName !== undefined) args.push("--pack", packName);
-  args.push("--store-root", storageRoot);
-  return runProcess(args);
-}
-
-interface PluginPackSummary {
-  name: string;
-  version: string;
-  description?: string;
-  appliesTo: readonly string[];
-}
-
-type PluginSummaryParseResult =
-  | { continue: true }
-  | { continue: false; packs: readonly PluginPackSummary[] };
-
-/**
- * Equivalent to the consuming Plugin's summary parser contract. The actual
- * Plugin is hosted outside this repository, so integration must still enforce
- * the same required fields and degraded fallback locally.
- */
-function parsePluginSummaryEquivalent(response: Record<string, unknown>): PluginSummaryParseResult {
-  if (response.command !== "list" || response.ok !== true || !isRecord(response.data)) {
-    return { continue: true };
-  }
-  const rawPacks = response.data.packs;
-  if (!Array.isArray(rawPacks)) return { continue: true };
-
-  const packs: PluginPackSummary[] = [];
-  for (const rawPack of rawPacks) {
-    if (
-      !isRecord(rawPack) ||
-      typeof rawPack.name !== "string" ||
-      typeof rawPack.version !== "string" ||
-      !Array.isArray(rawPack.appliesTo) ||
-      rawPack.appliesTo.some((value) => typeof value !== "string") ||
-      (rawPack.description !== undefined && typeof rawPack.description !== "string")
-    ) {
-      return { continue: true };
-    }
-    packs.push({
-      name: rawPack.name,
-      version: rawPack.version,
-      ...(rawPack.description === undefined ? {} : { description: rawPack.description }),
-      appliesTo: rawPack.appliesTo,
-    });
-  }
-  return { continue: false, packs };
-}
-
-function parseSingleResponse(stdout: string): Record<string, unknown> {
-  const lines = stdout.trim().split(/\r?\n/);
-  assert.equal(lines.length, 1, `expected one JSON response line, got ${lines.length}`);
-  const response: unknown = JSON.parse(lines[0]!);
-  assert(isRecord(response));
-  return response;
-}
-
-function selectProtocolFields(stdout: string): {
-  command: unknown;
-  errorCode?: unknown;
-  ok: unknown;
-} {
-  const response: unknown = JSON.parse(stdout);
-  assert(isRecord(response));
-
-  const error = response.error;
-  return {
-    command: response.command,
-    ...(isRecord(error) ? { errorCode: error.code } : {}),
-    ok: response.ok,
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-async function runProcess(
-  command: string[],
-  timeoutMs = processTimeoutMs,
-): Promise<{ exitCode: number; stderr: string; stdout: string }> {
-  const child = Bun.spawn({ cmd: command, stderr: "pipe", stdout: "pipe" });
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const executableName = command[0] ?? "<missing executable>";
-      try {
-        child.kill();
-      } catch (error) {
-        reject(
-          new Error(
-            `Process timed out after ${timeoutMs} ms and could not be terminated: ${executableName}`,
-            { cause: error },
-          ),
-        );
-        return;
-      }
-      reject(new Error(`Process timed out after ${timeoutMs} ms: ${executableName}`));
-    }, timeoutMs);
-  });
-
-  try {
-    const [stdout, stderr, exitCode] = await Promise.race([
-      Promise.all([
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-        child.exited,
-      ]),
-      timeout,
-    ]);
-    return { exitCode, stderr, stdout };
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-  }
-}
+if (import.meta.main) await main();
