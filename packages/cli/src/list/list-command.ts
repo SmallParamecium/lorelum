@@ -2,7 +2,7 @@ import type {
   ListPackDetailsResult,
   ListPackPracticesResult,
   ListPacksResult,
-  ListServiceWithPackDetails,
+  ListService,
   StorageRoot,
 } from "@lorelum/engine";
 import { PACK_NAME_REGEX } from "@lorelum/format";
@@ -14,7 +14,7 @@ import { invalidInvocationError } from "../runtime/errors.js";
 import { resolveInvocationStorageRoot } from "../store/storage-root.js";
 
 export interface ListCommandServices {
-  readonly list: Pick<ListServiceWithPackDetails, "list" | "listPack" | "listPackDetails">;
+  readonly list: ListService;
   readonly storageRoot: StorageRoot;
 }
 

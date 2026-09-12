@@ -8,7 +8,6 @@ export {
   createLocalStore,
   defaultStorageRoot,
   type LocalStore,
-  type InstalledPackDetailsReader,
   type OpenResult,
   type InstalledPackSummary,
   type InstalledPackDetails,

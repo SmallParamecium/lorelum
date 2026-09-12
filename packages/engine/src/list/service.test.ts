@@ -8,13 +8,12 @@ import {
   decodePackDirectory,
   StoreBusyError,
   StoreRecoveryRequiredError,
-  type InstalledPackDetailsReader,
   type LocalStore,
   type InstalledPackDetailsResult,
   type OpenResult,
   type StorageRoot,
 } from "../local-store/index.js";
-import { PackDetailsUnavailableError, UnknownPackError } from "./errors.js";
+import { UnknownPackError } from "./errors.js";
 import { createListService } from "./service.js";
 
 async function removeStoreRoot(rootPath: string): Promise<void> {
@@ -85,7 +84,7 @@ function fakeStore(
     effectiveRevision: open.effectiveRevision,
     packs: open.packs,
   },
-): Pick<LocalStore, "open"> & InstalledPackDetailsReader {
+): Pick<LocalStore, "open" | "readInstalledPackDetails"> {
   return {
     open: async () => open,
     readInstalledPackDetails: async () => details,
@@ -213,26 +212,6 @@ test("ListService succeeds with an empty fresh LocalStore", async () => {
   }
 });
 
-test("keeps the existing list modes compatible with a Store without rich metadata", async () => {
-  const service = createListService({
-    store: {
-      open: async () => ({
-        generation: 0,
-        effectiveRevision: 0,
-        packs: [],
-        effectivePractices: [],
-      }),
-    },
-  });
-
-  await expect(service.list()).resolves.toEqual({
-    generation: 0,
-    effectiveRevision: 0,
-    packs: [],
-  });
-  await expect(service.listPackDetails()).rejects.toBeInstanceOf(PackDetailsUnavailableError);
-});
-
 test("ListService maps missing and blank Pack names to UnknownPackError", async () => {
   const service = createListService({
     store: fakeStore({
@@ -250,7 +229,7 @@ test("ListService maps missing and blank Pack names to UnknownPackError", async 
 test("ListService propagates LocalStore busy and recovery failures", async () => {
   /* eslint-disable no-await-in-loop -- each error case asserts both sequential call sites. */
   for (const error of [new StoreBusyError("busy"), new StoreRecoveryRequiredError("recovery")]) {
-    const store: Pick<LocalStore, "open"> & InstalledPackDetailsReader = {
+    const store: Pick<LocalStore, "open" | "readInstalledPackDetails"> = {
       ...fakeStore({
         generation: 0,
         effectiveRevision: 0,

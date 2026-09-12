@@ -1,11 +1,10 @@
 import {
   createLocalStore,
   defaultStorageRoot,
-  type InstalledPackDetailsReader,
   type LocalStore,
   type StorageRoot,
 } from "../local-store/index.js";
-import { PackDetailsUnavailableError, UnknownPackError } from "./errors.js";
+import { UnknownPackError } from "./errors.js";
 import { retrievePackDetails, retrievePackPractices, retrievePacks } from "./retrieve.js";
 import type {
   ListPackDetailsResult,
@@ -17,14 +16,11 @@ import type {
 
 export interface ListService {
   list(request?: ListRequest): Promise<ListPacksResult>;
+  listPackDetails(request?: ListRequest): Promise<ListPackDetailsResult>;
   listPack(request: ListPackRequest): Promise<ListPackPracticesResult>;
 }
 
-export interface ListServiceWithPackDetails extends ListService {
-  listPackDetails(request?: ListRequest): Promise<ListPackDetailsResult>;
-}
-
-type ListStore = Pick<LocalStore, "open"> & Partial<InstalledPackDetailsReader>;
+type ListStore = Pick<LocalStore, "open" | "readInstalledPackDetails">;
 
 export interface ListServiceOptions {
   readonly store?: ListStore;
@@ -32,7 +28,7 @@ export interface ListServiceOptions {
 }
 
 /** Application boundary for the LocalStore-backed `lore list` catalog. */
-export function createListService(options: ListServiceOptions = {}): ListServiceWithPackDetails {
+export function createListService(options: ListServiceOptions = {}): ListService {
   const store = options.store ?? createLocalStore();
   const fallbackStorageRoot = options.storageRoot ?? defaultStorageRoot();
 
@@ -50,9 +46,6 @@ export function createListService(options: ListServiceOptions = {}): ListService
     },
 
     async listPackDetails(request: ListRequest = {}): Promise<ListPackDetailsResult> {
-      if (store.readInstalledPackDetails === undefined) {
-        throw new PackDetailsUnavailableError();
-      }
       const opened = await store.readInstalledPackDetails(
         request.storageRoot ?? fallbackStorageRoot,
       );

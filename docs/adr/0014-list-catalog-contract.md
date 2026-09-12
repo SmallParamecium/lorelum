@@ -44,13 +44,12 @@ The optional positional scope accepts only `packs`. The three supported modes ar
 `@lorelum/engine` exposes a List application service and deterministic pure projections:
 
 - `LocalStore.open()` includes a minimal `InstalledPackSummary[]` (`name`, `version`) from the verified active manifest;
-- `createLocalStore()` exposes the verified Pack metadata capability `readInstalledPackDetails()` without changing `OpenResult.packs`; the base `LocalStore` contract remains usable by existing implementations that only support the original catalog operations;
+- `LocalStore.readInstalledPackDetails()` exposes verified Pack metadata without changing `OpenResult.packs`;
 - Pack version is owned by the active-manifest Pack summary. `EffectivePractice.sources[]` carries the Practice-to-Pack provenance (`packName`, source path, and digests) and intentionally does not repeat Pack version;
 - `retrievePacks()` combines those summaries with Effective Practice source claims;
 - the rich Pack projection reads `description` and `applies_to` from the sealed Pack projection, not from the manifest or Effective Practices;
 - `retrievePackPractices()` returns only Practices for which the selected Pack has a source claim, or `null` when the Pack is not active;
 - `createListService()` reads the selected Store once per invocation, projects one of the three catalogs, and converts a missing Pack to `UnknownPackError`.
-- The rich catalog requires the metadata capability at runtime. An injected Store without that capability fails explicitly with an Engine typed error; existing `list` and `list --pack` calls remain available.
 
 The CLI adapter performs Pack-name syntax validation, Store-root resolution, service dispatch, and error mapping. It never reads `installed-packs.json`, queries SQLite, scans artifacts, or computes the domain catalog itself. A future MCP tool must validate its own input shape before calling the service.
 

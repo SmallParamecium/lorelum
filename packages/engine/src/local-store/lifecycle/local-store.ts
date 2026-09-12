@@ -59,6 +59,8 @@ export interface LocalStore {
   ): Promise<EffectivePractice | undefined>;
   /** Cold open; throws StoreRecoveryRequiredError on any inconsistency. */
   open(root: StorageRoot): Promise<OpenResult>;
+  /** Verified Pack metadata from sealed projections without widening OpenResult.packs. */
+  readInstalledPackDetails(root: StorageRoot): Promise<InstalledPackDetailsResult>;
   install(
     root: StorageRoot,
     candidate: PackCandidate,
@@ -93,11 +95,6 @@ export interface LocalStore {
   onEffectiveRevisionAdvanced?: EffectiveRevisionHook | undefined;
 }
 
-/** Optional capability for consumers that need verified Pack metadata. */
-export interface InstalledPackDetailsReader {
-  readInstalledPackDetails(root: StorageRoot): Promise<InstalledPackDetailsResult>;
-}
-
 export type { InstalledPackDetails } from "../model/pack-details";
 
 /**
@@ -108,9 +105,9 @@ export type { InstalledPackDetails } from "../model/pack-details";
  */
 export function createLocalStore(
   options: { onEffectiveRevisionAdvanced?: EffectiveRevisionHook } = {},
-): LocalStore & InstalledPackDetailsReader {
+): LocalStore {
   const hook = options.onEffectiveRevisionAdvanced;
-  const store: LocalStore & InstalledPackDetailsReader = {
+  const store: LocalStore = {
     getEffectivePractice(root, practiceId) {
       return getEffectivePractice(root.rootPath, practiceId);
     },

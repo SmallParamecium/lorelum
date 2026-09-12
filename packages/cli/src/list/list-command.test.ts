@@ -7,7 +7,7 @@ import {
   defaultStorageRoot,
   type ListPackRequest,
   type ListRequest,
-  type ListServiceWithPackDetails,
+  type ListService,
 } from "@lorelum/engine";
 import { resolve } from "node:path";
 
@@ -66,7 +66,7 @@ const packDetailsResult = {
   ],
 };
 
-function service(): ListServiceWithPackDetails {
+function service(overrides: Partial<ListService> = {}): ListService {
   return {
     async list() {
       return packsResult;
@@ -77,7 +77,15 @@ function service(): ListServiceWithPackDetails {
     async listPack() {
       return packResult;
     },
+    ...overrides,
   };
+}
+
+function failingService(error: unknown): ListService {
+  const fail = async (): Promise<never> => {
+    throw error;
+  };
+  return service({ list: fail, listPackDetails: fail, listPack: fail });
 }
 
 test("describes the LocalStore-backed list command contract", () => {
@@ -164,7 +172,7 @@ test("rejects conflicting and unknown list scopes before service dispatch", asyn
   const calls: string[] = [];
   const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
     createListCommand({
-      list: {
+      list: service({
         async list() {
           calls.push("list");
           return packsResult;
@@ -177,7 +185,7 @@ test("rejects conflicting and unknown list scopes before service dispatch", asyn
           calls.push("listPack");
           return packResult;
         },
-      },
+      }),
       storageRoot: defaultStorageRoot(),
     }),
   ]);
@@ -211,19 +219,16 @@ test("rejects malformed Pack names before service dispatch", async () => {
   const calls: string[] = [];
   const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
     createListCommand({
-      list: {
+      list: service({
         async list(request = {}) {
           calls.push(`list:${request.storageRoot?.rootPath ?? "default"}`);
           return packsResult;
-        },
-        async listPackDetails() {
-          return packDetailsResult;
         },
         async listPack(request) {
           calls.push(`listPack:${request.packName}`);
           return packResult;
         },
-      },
+      }),
       storageRoot: defaultStorageRoot(),
     }),
   ]);
@@ -250,19 +255,16 @@ test("rejects an empty --store-root value before service dispatch", async () => 
   const calls: string[] = [];
   const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
     createListCommand({
-      list: {
+      list: service({
         async list(request = {}) {
           calls.push(`list:${request.storageRoot?.rootPath}`);
           return packsResult;
-        },
-        async listPackDetails() {
-          return packDetailsResult;
         },
         async listPack() {
           calls.push("listPack");
           return packResult;
         },
-      },
+      }),
       storageRoot: defaultStorageRoot(),
     }),
   ]);
@@ -281,17 +283,11 @@ test("maps an unknown Pack without echoing the supplied name", async () => {
   const stdout = new MemoryWriter();
   const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
     createListCommand({
-      list: {
-        async list() {
-          return packsResult;
-        },
-        async listPackDetails() {
-          return packDetailsResult;
-        },
+      list: service({
         async listPack() {
           throw new UnknownPackError("private-pack-name");
         },
-      },
+      }),
       storageRoot: defaultStorageRoot(),
     }),
   ]);
@@ -310,80 +306,47 @@ test("maps an unknown Pack without echoing the supplied name", async () => {
   expect(stdout.value).not.toContain("private-pack-name");
 });
 
-test("maps LocalStore recovery failures to the declared public error", async () => {
+async function expectListFailure(
+  list: ListService,
+  args: readonly string[],
+  error: Record<string, unknown>,
+): Promise<void> {
   const stdout = new MemoryWriter();
-  const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
-    createListCommand({
-      list: {
-        async list() {
-          throw new StoreRecoveryRequiredError("test recovery failure");
-        },
-        async listPackDetails() {
-          throw new StoreRecoveryRequiredError("test recovery failure");
-        },
-        async listPack() {
-          throw new StoreRecoveryRequiredError("test recovery failure");
-        },
-      },
-      storageRoot: defaultStorageRoot(),
-    }),
+  const definitions = snapshotCommandDefinitions([
+    createListCommand({ list, storageRoot: defaultStorageRoot() }),
   ]);
+  expect(await run([...args], { registry: definitions, stdout })).toBe(2);
+  expect(JSON.parse(stdout.value)).toMatchObject({ command: "list", ok: false, error });
+}
 
-  expect(await run(["list"], { registry: definitions, stdout })).toBe(2);
-  expect(JSON.parse(stdout.value)).toMatchObject({
-    command: "list",
-    ok: false,
-    error: { code: "store.recovery-required" },
-  });
+const listModeArguments = [["list"], ["list", "packs"], ["list", "--pack", "agentic-coding"]];
+
+test("maps LocalStore recovery failures from every list mode", async () => {
+  const list = failingService(new StoreRecoveryRequiredError("test recovery failure"));
+  await Promise.all(
+    listModeArguments.map((args) =>
+      expectListFailure(list, args, { code: "store.recovery-required" }),
+    ),
+  );
 });
 
-test("maps LocalStore busy failures to the declared public error", async () => {
-  const stdout = new MemoryWriter();
-  const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
-    createListCommand({
-      list: {
-        async list() {
-          throw new StoreBusyError("test busy failure");
-        },
-        async listPackDetails() {
-          throw new StoreBusyError("test busy failure");
-        },
-        async listPack() {
-          throw new StoreBusyError("test busy failure");
-        },
-      },
-      storageRoot: defaultStorageRoot(),
-    }),
-  ]);
-
-  expect(await run(["list"], { registry: definitions, stdout })).toBe(2);
-  expect(JSON.parse(stdout.value)).toMatchObject({
-    command: "list",
-    ok: false,
-    error: { code: "store.busy" },
-  });
+test("maps LocalStore busy failures from every list mode", async () => {
+  const list = failingService(new StoreBusyError("test busy failure"));
+  await Promise.all(
+    listModeArguments.map((args) => expectListFailure(list, args, { code: "store.busy" })),
+  );
 });
 
-test("normalizes an undeclared list failure to runtime.unexpected", async () => {
+test("normalizes undeclared list failures without exposing their details", async () => {
   const stdout = new MemoryWriter();
-  const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
+  const definitions = snapshotCommandDefinitions([
     createListCommand({
-      list: {
-        async list() {
-          throw new Error("private list implementation detail");
-        },
-        async listPackDetails() {
-          throw new Error("private list implementation detail");
-        },
-        async listPack() {
-          throw new Error("private list implementation detail");
-        },
-      },
+      list: failingService(new Error("private list implementation detail")),
       storageRoot: defaultStorageRoot(),
     }),
   ]);
 
-  expect(await run(["list"], { registry: definitions, stdout })).toBe(2);
+  expect(await run(["list", "packs"], { registry: definitions, stdout })).toBe(2);
   expect(JSON.parse(stdout.value)).toMatchObject({
     command: "list",
     ok: false,
@@ -395,72 +358,52 @@ test("normalizes an undeclared list failure to runtime.unexpected", async () => 
   expect(stdout.value).not.toContain("private list implementation detail");
 });
 
-test("passes through a declared CliError from the list service", async () => {
-  const stdout = new MemoryWriter();
-  const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
-    createListCommand({
-      list: {
-        async list() {
-          throw new CliError(cliErrorCodes.usageInvalid, "The list request was rejected.");
-        },
-        async listPackDetails() {
-          throw new CliError(cliErrorCodes.usageInvalid, "The list request was rejected.");
-        },
-        async listPack() {
-          throw new CliError(cliErrorCodes.usageInvalid, "The list request was rejected.");
-        },
-      },
-      storageRoot: defaultStorageRoot(),
-    }),
-  ]);
-
-  expect(await run(["list"], { registry: definitions, stdout })).toBe(2);
-  expect(JSON.parse(stdout.value)).toMatchObject({
-    command: "list",
-    ok: false,
-    error: {
-      code: "usage.invalid",
-      message: "The list request was rejected.",
-    },
-  });
+test("passes through declared CliErrors from the list service", async () => {
+  await expectListFailure(
+    failingService(new CliError(cliErrorCodes.usageInvalid, "The list request was rejected.")),
+    ["list", "packs"],
+    { code: "usage.invalid", message: "The list request was rejected." },
+  );
 });
 
-test("resolves --store-root and forwards the selected Store to both modes", async () => {
+test("resolves --store-root and forwards the selected Store to every list mode", async () => {
   const listRequests: ListRequest[] = [];
+  const richListRequests: ListRequest[] = [];
   const listPackRequests: ListPackRequest[] = [];
   const definitions: readonly CommandDefinition[] = snapshotCommandDefinitions([
     createListCommand({
-      list: {
+      list: service({
         async list(request = {}) {
           listRequests.push(request);
           return packsResult;
         },
-        async listPackDetails() {
+        async listPackDetails(request = {}) {
+          richListRequests.push(request);
           return packDetailsResult;
         },
         async listPack(request) {
           listPackRequests.push(request);
           return packResult;
         },
-      },
+      }),
       storageRoot: { rootPath: "default-user-store" },
     }),
   ]);
 
-  const stdout = new MemoryWriter();
-  expect(
-    await run(["list", "--store-root", "isolated-store"], { registry: definitions, stdout }),
-  ).toBe(0);
-  stdout.value = "";
-  expect(
-    await run(["list", "--pack", "agentic-coding", "--store-root", "isolated-store"], {
-      registry: definitions,
-      stdout,
+  await Promise.all(
+    [
+      ["list", "--store-root", "isolated-store"],
+      ["list", "packs", "--store-root", "isolated-store"],
+      ["list", "--pack", "agentic-coding", "--store-root", "isolated-store"],
+    ].map(async (args) => {
+      const stdout = new MemoryWriter();
+      expect(await run(args, { registry: definitions, stdout })).toBe(0);
     }),
-  ).toBe(0);
+  );
 
   const expectedRoot = { rootPath: resolve(process.cwd(), "isolated-store") };
   expect(listRequests[0]?.storageRoot).toEqual(expectedRoot);
+  expect(richListRequests[0]?.storageRoot).toEqual(expectedRoot);
   expect(listPackRequests[0]?.storageRoot).toEqual(expectedRoot);
   expect(listPackRequests[0]?.packName).toBe("agentic-coding");
 });
