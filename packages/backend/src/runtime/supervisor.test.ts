@@ -50,7 +50,7 @@ test("status and stop of absent backend do not create runtime files", async () =
   }));
 
 test(
-  "concurrent starters share one daemon; compatible controller stops an older build",
+  "concurrent starters share one daemon; mismatched builds cannot control it",
   async () =>
     fixture(async (directory, port, command) => {
       const options = {
@@ -67,10 +67,11 @@ test(
       expect(record.pid).not.toBe(process.pid);
       expect((await stat(directory)).mode & 0o777).toBe(0o700);
       expect((await stat(join(directory, "instance.json"))).mode & 0o777).toBe(0o600);
-      const upgraded = createBackendSupervisor({ ...options, buildIdentity: "new-build" });
-      expect((await upgraded.status()).buildIdentity).toBe("integration-build");
-      await expect(upgraded.start()).rejects.toMatchObject({ code: "backend.incompatible" });
-      expect(await upgraded.stop()).toEqual({ state: "stopped", model: "unloaded" });
+      const mismatched = createBackendSupervisor({ ...options, buildIdentity: "different-build" });
+      await expect(mismatched.status()).rejects.toMatchObject({ code: "backend.incompatible" });
+      await expect(mismatched.start()).rejects.toMatchObject({ code: "backend.incompatible" });
+      await expect(mismatched.stop()).rejects.toMatchObject({ code: "backend.incompatible" });
+      expect(await controllers[0]!.stop()).toEqual({ state: "stopped", model: "unloaded" });
       expect(await isSameProcess(record)).toBe(false);
       expect(await readRecord(directory)).toBeUndefined();
       const log = await readFile(join(directory, "backend.log"), "utf8");
@@ -200,6 +201,29 @@ test(
       await next.stop();
       await next.start();
       expect((await readRecord(directory))?.settings).toEqual(updated);
+    }),
+  20_000,
+);
+
+test(
+  "daemon launch record retains the resolved embedding snapshot",
+  async () =>
+    fixture(async (directory, port, command) => {
+      const controller = createBackendSupervisor({
+        buildIdentity: "integration-build",
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+        config: {
+          runtimeDirectory: directory,
+          settings: { startupTimeoutMs: 10_000, requestTimeoutMs: 5_000, shutdownTimeoutMs: 5_000 },
+          embedding: { modelPath: "/models/granite.gguf" },
+        },
+      });
+      await controller.start();
+      expect((await readRecord(directory))?.embedding).toMatchObject({
+        modelPath: "/models/granite.gguf",
+      });
     }),
   20_000,
 );

@@ -1,11 +1,14 @@
-import { consumeDaemonLaunch, resolveBackendSettings } from "../config";
+import { prepareModel } from "../models/prepare";
+import { createEmbeddingService } from "../modules/embedding/service";
+import { createEmbeddingProcess } from "./embedding-process";
+import { consumeDaemonLaunch, resolveBackendSettings, resolveEmbeddingConfig } from "../config";
 import { createLocalStore, createQueryService } from "@lorelum/engine";
 import { BACKEND_HOST, MAX_BODY_BYTES } from "../protocol/constants";
 import { BackendError } from "../protocol/errors";
 import { createBackendApp } from "../app";
 import { createBackendService } from "../modules/backend/service";
 import { isSameProcess } from "./process-identity";
-import { readRecord, removeRecord } from "./runtime-state";
+import { readRecord, removeRecord, writeRecord } from "./runtime-state";
 import { logEvent } from "./log";
 
 export async function runBackendDaemon(options: { readonly buildIdentity: string }): Promise<void> {
@@ -23,16 +26,38 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
   )
     throw new BackendError("backend.unauthorized");
   const settings = resolveBackendSettings(record.settings);
+  const embeddingConfig = resolveEmbeddingConfig(record.embedding);
+  const embedding = createEmbeddingService({
+    settings,
+    threads: embeddingConfig.threads,
+    maxTokens: embeddingConfig.maxTokens,
+    prepareModel: (signal, progress) => prepareModel(embeddingConfig, signal, progress),
+    createRuntime: (modelPath) =>
+      createEmbeddingProcess(
+        { modelPath, threads: embeddingConfig.threads, maxTokens: embeddingConfig.maxTokens },
+        async (modelProcess) => {
+          const current = await readRecord(directory);
+          if (!current || current.instanceId !== instanceId)
+            throw new BackendError("backend.state-invalid");
+          const withoutModel = { ...current };
+          delete withoutModel.modelProcess;
+          await writeRecord(
+            directory,
+            modelProcess ? { ...withoutModel, modelProcess } : withoutModel,
+          );
+        },
+      ),
+  });
   let ready = false;
   const backend = createBackendService({
     identity: {
       instanceId: record.instanceId,
       buildIdentity: record.buildIdentity,
-      controlVersion: record.controlVersion,
-      businessVersion: record.businessVersion,
+      protocolVersion: record.protocolVersion,
     },
     secret: record.secret,
     isReady: () => ready,
+    modelState: () => embedding.status().state,
     onStop: shutdown,
     onStopFailure: () => {
       process.exitCode = 1;
@@ -40,6 +65,7 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
   });
   const app = createBackendApp({
     backend,
+    embedding,
     port,
     queryService: createQueryService({ store: createLocalStore() }),
   });
@@ -47,15 +73,18 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
     void backend.stop();
   };
   async function shutdown(): Promise<void> {
+    const deadline = Date.now() + settings.shutdownTimeoutMs;
     const force = setTimeout(() => {
       void app.stop(true);
     }, settings.shutdownTimeoutMs);
     try {
+      await embedding.unload(deadline);
       await app.stop(false);
       await logEvent(directory, "stopped");
       await removeRecord(directory, instanceId);
     } finally {
       clearTimeout(force);
+      if (app.server) await app.stop(true);
       process.off("SIGTERM", signalHandler);
       process.off("SIGINT", signalHandler);
     }
@@ -72,6 +101,7 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
     await logEvent(directory, "ready");
     ready = true;
   } catch (error) {
+    await embedding.unload().catch(() => {});
     if (app.server) await app.stop(true);
     await logEvent(directory, "failed", "backend.failed");
     throw new BackendError("backend.failed", { cause: error });

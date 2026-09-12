@@ -1,6 +1,11 @@
-import { loadConfig, ConfigError } from "@lorelum/shared/config";
-import { homedir } from "node:os";
+import {
+  loadConfig,
+  resolveLorelumPaths,
+  ConfigError,
+  type LoadConfigOptions,
+} from "@lorelum/config";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { BackendError } from "../protocol/errors";
 import {
   backendSettingsSchema,
@@ -9,6 +14,7 @@ import {
   type BackendSettings,
   type Environment,
 } from "./model";
+import { resolveEmbeddingConfig } from "./embedding";
 
 const settingsSource = backendSettingsSchema.partial();
 const environmentKeys = {
@@ -18,7 +24,7 @@ const environmentKeys = {
 } as const;
 
 export function defaultRuntimeDirectory(homeDirectory = homedir()): string {
-  return join(homeDirectory, ".lorelum", "run", "backend");
+  return join(resolveLorelumPaths(homeDirectory).rootDirectory, "run", "backend");
 }
 
 /** Pure resolver for already-read sources; each source must be valid on its own. */
@@ -35,15 +41,13 @@ export function resolveBackendSettings(...sources: readonly unknown[]): BackendS
   return Object.freeze(resolved.data);
 }
 
-export interface LoadBackendConfigOptions {
-  readonly homeDirectory?: string;
-  readonly filePath?: string;
+export interface LoadBackendConfigOptions extends LoadConfigOptions {
   readonly environment?: Environment;
   /** Dependency injection, not an additional public CLI surface. */
   readonly overrides?: Partial<BackendSettings>;
 }
 
-/** Defaults < shared YAML file < named environment values < explicit injection. No writes. */
+/** Defaults < YAML < named environment < injection. Read-only; validates only this consumer's sections. */
 export async function loadBackendConfig(
   options: LoadBackendConfigOptions = {},
 ): Promise<BackendConfig> {
@@ -64,8 +68,10 @@ export async function loadBackendConfig(
     throw error;
   }
   const fromFile = document.backend;
+  const embedding = resolveEmbeddingConfig(document.embedding, homeDirectory);
   return Object.freeze({
     runtimeDirectory: defaultRuntimeDirectory(homeDirectory),
     settings: resolveBackendSettings(fromFile, fromEnvironment, options.overrides),
+    ...(embedding === undefined ? {} : { embedding }),
   });
 }

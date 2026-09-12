@@ -4,10 +4,14 @@ This is the index for day-to-day development topics that do not belong in the pr
 
 ## Topics
 
+- [Local backend API](../api/README.md)
+- [CLI command index](../cli/README.md)
+- [Backend configuration](../configuration/README.md)
 - [Environment and dependencies](../../CONTRIBUTING.md#development-environment)
 - [Tests and CI](../../CONTRIBUTING.md#testing--ci)
 - [Issues, branches, and PRs](../../CONTRIBUTING.md#development-workflow)
 - [Local CLI and worktrees](#local-cli-and-multiple-worktrees)
+- [Embedding native runtime](#embedding-native-runtime)
 - [Discover installed Packs with `lore list`](../cli/list.md)
 - [Read an installed Practice with `lore get`](../cli/get.md)
 - [Query installed Practices with `lore query`](../cli/query.md)
@@ -91,6 +95,18 @@ rehash
 
 This assumes `~/.local/bin` is already in `PATH`. If the destination exists, inspect it instead of replacing it blindly.
 
+### Embedding native runtime
+
+Embedding source checks need one native candidate in the current worktree:
+
+```sh
+bun run build:native
+```
+
+The candidate is copied to `packages/backend/.artifacts/native/embedding/darwin-arm64/`. The completed native runtime is shared only as a developer build cache, currently `~/Library/Caches/Lorelum/native/v1` on macOS. A matching second worktree verifies and copies that runtime instead of running CMake again. The cache does not belong to `~/.lorelum`, is not selected by `config.yaml`, and is never used as the backend runtime path; removing it merely makes the next `build:native` rebuild the candidate.
+
+This remains a macOS arm64 CPU build. The source archive, pinned CMake download, and CMake intermediate files remain in the invoking worktree's ignored `.cache/native-build/` and are only needed on a cache miss. See the [native build guide](../../native/embedding/README.md) for lifecycle checks and the release/source trust boundary.
+
 ### Store isolation rules
 
 Any manual Store-writing workflow (for example, future `uninstall` or `reindex` commands) must pass an explicitly isolated `--store-root`. These commands are not implemented merely because they are named here; the rule is a forward-looking safety constraint. `get` also needs an isolated root during development: its point-read path can initialize or recover the selected Store.
@@ -136,3 +152,5 @@ const result = await queryService.query(
 `text` is trimmed, must not be empty, and is limited to 4,096 Unicode code points. `limit` defaults to `5` and must be an integer from `1` to `50`. The result has `mode: "keyword"` and `results` containing `practiceId`, `title`, `stage`, `techStack`, `appliesWhen`, `severity`, and `contentDigest`; it does not include full bodies or internal scores. Invalid requests throw `InvalidQueryRequestError`. FTS5 runtime failures throw `KeywordIndexUnavailableError` or `KeywordIndexError`; callers at protocol boundaries translate these types to their own error codes.
 
 QueryService keeps its public request/result contract local, but reuses a derived FTS5 SQLite index under the selected Store root across CLI processes. It binds that index to a verified effective revision, updates it from LocalStore's retained revision deltas, and rebuilds only when the index or its history cannot be trusted. Canonical Store rows remain the source of returned summaries; QueryService does not expose SQLite handles. Semantic retrieval and MCP lifecycle caching remain later design work.
+
+全局配置基础包是 `packages/config`，CLI、Engine 和 backend 可直接依赖它；它不依赖服务进程。各包自己的 config 模块负责 section schema 与业务默认值。共享文件初始化由应用组装层触发，不能放进某个消费方的读取函数。详见[配置包边界](../configuration/README.md#包边界与直接读取)。

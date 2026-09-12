@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile, readdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadBackendConfig, resolveBackendSettings } from "./load";
 import { DEFAULT_BACKEND_SETTINGS } from "./model";
 
 async function fixture(run: (homeDirectory: string, filePath: string) => Promise<void>) {
-  const home = await mkdtemp(join(tmpdir(), "lorelum-config-"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "lorelum-config-")));
   try {
     await run(home, join(home, "config.yaml"));
   } finally {
@@ -22,6 +22,22 @@ test("absent config uses defaults without creating files", () =>
     expect(await readdir(homeDirectory)).toEqual([]);
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.settings)).toBe(true);
+  }));
+
+test("loads and freezes the optional embedding snapshot from shared config", () =>
+  fixture(async (homeDirectory, filePath) => {
+    await writeFile(filePath, "embedding:\n  modelPath: /models/granite.gguf\n");
+    const config = await loadBackendConfig({ homeDirectory, filePath, environment: {} });
+    expect(config.embedding).toMatchObject({ modelPath: "/models/granite.gguf" });
+    expect(Object.isFrozen(config.embedding)).toBe(true);
+  }));
+
+test("rejects invalid embedding config", () =>
+  fixture(async (homeDirectory, filePath) => {
+    await writeFile(filePath, "embedding:\n  modelPath: relative.gguf\n");
+    await expect(
+      loadBackendConfig({ homeDirectory, filePath, environment: {} }),
+    ).rejects.toMatchObject({ code: "backend.config-invalid" });
   }));
 
 test("file, environment and explicit values override defaults in order", () =>

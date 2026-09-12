@@ -3,16 +3,20 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { QueryService } from "@lorelum/engine";
 
 import { createBackendApp } from "../app";
+import { createEmbeddingService, type EmbeddingService } from "../modules/embedding/service";
 import { createBackendService } from "../modules/backend/service";
 import type { InstanceIdentity } from "../protocol/identity";
 import { BackendRemoteError } from "../protocol/errors";
+import { EmbeddingError } from "../modules/embedding/errors";
+import { EMBEDDING_MODEL, ENCODING_ID } from "../modules/embedding/model";
+import { PROTOCOL_VERSION } from "../protocol/constants";
+import { DEFAULT_BACKEND_SETTINGS } from "../config/model";
 import { createBackendClient } from "./client";
 
 const identity = Object.freeze({
   instanceId: "test-instance",
   buildIdentity: "test-build",
-  controlVersion: 1,
-  businessVersion: 1,
+  protocolVersion: PROTOCOL_VERSION,
 });
 const secret = "a secret used only by tests";
 const apps: Array<ReturnType<typeof createBackendApp>> = [];
@@ -24,12 +28,14 @@ afterEach(() => {
 function runningApp(
   queryService?: QueryService,
   backendIdentity: InstanceIdentity = identity,
+  embedding?: EmbeddingService,
 ): {
   readonly app: ReturnType<typeof createBackendApp>;
   readonly url: string;
 } {
   const app = createBackendApp({
     backend: createBackendService({ identity: backendIdentity, secret, onStop: () => undefined }),
+    ...(embedding === undefined ? {} : { embedding }),
     queryService: queryService ?? {
       async query() {
         return { mode: "keyword", results: [] } as const;
@@ -69,20 +75,7 @@ describe("createBackendClient", () => {
     ]);
   });
 
-  test("allows a compatible control client to stop an older build", async () => {
-    const { url } = runningApp();
-    const client = createBackendClient({
-      identity,
-      secret,
-      buildIdentity: "newer-build",
-      baseUrl: url,
-    });
-
-    await expect(client.status()).resolves.toMatchObject({ state: "ready" });
-    await expect(client.stop()).resolves.toMatchObject({ state: "stopping" });
-  });
-
-  test("does not send a query to a service with a different business build", async () => {
+  test("does not send a query to a service with a different build", async () => {
     const { url } = runningApp();
     const client = createBackendClient({
       identity,
@@ -91,22 +84,6 @@ describe("createBackendClient", () => {
       baseUrl: url,
     });
 
-    await expect(
-      client.query({ rootPath: "/tmp/lorelum-client-test" }, { text: "search" }),
-    ).rejects.toEqual(expect.objectContaining({ code: "backend.incompatible" }));
-  });
-
-  test("allows control operations but rejects queries against an older business protocol", async () => {
-    const { url } = runningApp(undefined, { ...identity, businessVersion: 0 });
-    const client = createBackendClient({
-      identity,
-      secret,
-      buildIdentity: "test-build",
-      baseUrl: url,
-    });
-
-    await expect(client.status()).resolves.toMatchObject({ state: "ready" });
-    await expect(client.stop()).resolves.toMatchObject({ state: "stopping" });
     await expect(
       client.query({ rootPath: "/tmp/lorelum-client-test" }, { text: "search" }),
     ).rejects.toEqual(expect.objectContaining({ code: "backend.incompatible" }));
@@ -148,4 +125,168 @@ describe("createBackendClient", () => {
       }),
     ).toThrow(TypeError);
   });
+
+  test("loads, reports, unloads, and embeds through the authenticated model contract", async () => {
+    const calls: string[] = [];
+    const { url } = runningApp(undefined, identity, {
+      status: () => ({
+        state: "ready",
+        encodingId: ENCODING_ID,
+        device: "cpu",
+        dimensions: EMBEDDING_MODEL.dimensions,
+        threads: 4,
+        maxTokens: 512,
+      }),
+      beginLoad() {
+        calls.push("load");
+        return this.status();
+      },
+      async load() {
+        return this.status();
+      },
+      async unload() {
+        calls.push("unload");
+        return { ...this.status(), state: "unloaded" };
+      },
+      async embed(kind, inputs) {
+        calls.push(`${kind}:${inputs.length}`);
+        return { encodingId: ENCODING_ID, vectors: [[1, ...Array(383).fill(0)]] };
+      },
+    });
+    const client = createBackendClient({
+      identity,
+      secret,
+      buildIdentity: identity.buildIdentity,
+      baseUrl: url,
+    });
+
+    await expect(client.statusModel()).resolves.toMatchObject({ state: "ready" });
+    await expect(client.loadModel()).resolves.toMatchObject({ state: "ready" });
+    await expect(client.unloadModel()).resolves.toMatchObject({ state: "unloaded" });
+    await expect(client.embed("query", ["hello"])).resolves.toMatchObject({
+      encodingId: ENCODING_ID,
+    });
+    expect(calls).toEqual(["load", "unload", "query:1"]);
+  });
+
+  test("load polls asynchronous preparation beyond the native startup budget and maps failure", async () => {
+    const phases: string[] = [];
+    const embedding = createEmbeddingService({
+      settings: { ...DEFAULT_BACKEND_SETTINGS, startupTimeoutMs: 10 },
+      prepareModel: async (_, progress) => {
+        progress({ phase: "downloading", downloadedBytes: 10, totalBytes: 100 });
+        await Bun.sleep(300);
+        throw new EmbeddingError("embedding.download-failed");
+      },
+      createRuntime: () => {
+        throw new Error("download must finish first");
+      },
+    });
+    const { url } = runningApp(undefined, identity, embedding);
+    const client = createBackendClient({
+      identity,
+      secret,
+      buildIdentity: identity.buildIdentity,
+      baseUrl: url,
+      timeoutMs: 1000,
+    });
+    await expect(
+      client.loadModel({ onProgress: (value) => phases.push(value.progress!.phase) }),
+    ).rejects.toMatchObject({ code: "embedding.download-failed" });
+    expect(phases).toContain("downloading");
+    await expect(client.embed("query", Array(9).fill("x"))).rejects.toMatchObject({
+      code: "embedding.input-invalid",
+    });
+  });
+
+  test("uses shutdown timeout for model unload", async () => {
+    const { url } = runningApp(undefined, identity, {
+      status: () => ({
+        state: "ready",
+        encodingId: ENCODING_ID,
+        device: "cpu",
+        dimensions: EMBEDDING_MODEL.dimensions,
+        threads: 4,
+        maxTokens: 512,
+      }),
+      beginLoad() {
+        return this.status();
+      },
+      async load() {
+        return this.status();
+      },
+      async unload() {
+        await Bun.sleep(100);
+        return { ...this.status(), state: "unloaded" };
+      },
+      async embed() {
+        return { encodingId: ENCODING_ID, vectors: [[1, ...Array(383).fill(0)]] };
+      },
+    });
+    const client = createBackendClient({
+      identity,
+      secret,
+      buildIdentity: identity.buildIdentity,
+      baseUrl: url,
+      timeoutMs: 1_000,
+      shutdownTimeoutMs: 10,
+    });
+    await expect(client.unloadModel()).rejects.toMatchObject({ code: "backend.deadline-exceeded" });
+  });
+
+  test("rejects an embedding response whose vector count differs from the input count", async () => {
+    const { url } = runningApp(undefined, identity, {
+      status: () => ({
+        state: "ready",
+        encodingId: ENCODING_ID,
+        device: "cpu",
+        dimensions: EMBEDDING_MODEL.dimensions,
+        threads: 4,
+        maxTokens: 512,
+      }),
+      beginLoad() {
+        return this.status();
+      },
+      load: async () => ({
+        state: "ready",
+        encodingId: ENCODING_ID,
+        device: "cpu",
+        dimensions: EMBEDDING_MODEL.dimensions,
+        threads: 4,
+        maxTokens: 512,
+      }),
+      unload: async () => ({
+        state: "unloaded",
+        encodingId: ENCODING_ID,
+        device: "cpu",
+        dimensions: EMBEDDING_MODEL.dimensions,
+        threads: 4,
+        maxTokens: 512,
+      }),
+      embed: async () => ({ encodingId: ENCODING_ID, vectors: [[1, ...Array(383).fill(0)]] }),
+    });
+    const client = createBackendClient({
+      identity,
+      secret,
+      buildIdentity: identity.buildIdentity,
+      baseUrl: url,
+    });
+    await expect(client.embed("query", ["hello", "world"])).rejects.toMatchObject({
+      code: "backend.failed",
+    });
+  });
+});
+
+test("rejects a mismatched protocol before sending control or model requests", async () => {
+  const mismatchedIdentity = { ...identity, protocolVersion: PROTOCOL_VERSION + 1 };
+  const { url } = runningApp(undefined, mismatchedIdentity);
+  const client = createBackendClient({
+    identity: mismatchedIdentity,
+    secret,
+    buildIdentity: "test-build",
+    baseUrl: url,
+  });
+  await expect(client.status()).rejects.toMatchObject({ code: "backend.incompatible" });
+  await expect(client.stop()).rejects.toMatchObject({ code: "backend.incompatible" });
+  await expect(client.loadModel()).rejects.toMatchObject({ code: "backend.incompatible" });
 });

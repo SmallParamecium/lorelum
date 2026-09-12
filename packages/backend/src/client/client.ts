@@ -1,9 +1,12 @@
+/* eslint-disable no-await-in-loop -- Model loading polls one shared operation without a transfer deadline. */
+import type { z } from "zod";
+import { readBoundedJson } from "../http/read-json";
 import { randomBytes } from "node:crypto";
 
 import {
   BACKEND_URL,
-  BUSINESS_VERSION,
-  CONTROL_VERSION,
+  BACKEND_ROUTES,
+  PROTOCOL_VERSION,
   MAX_RESPONSE_BYTES,
 } from "../protocol/constants";
 import {
@@ -13,6 +16,7 @@ import {
   BackendError,
   backendErrorCodes,
 } from "../protocol/errors";
+import { EmbeddingError, embeddingErrorCodes } from "../modules/embedding/errors";
 import { constantTimeEqual, identityProof, type InstanceIdentity } from "../protocol/identity";
 import { queryRequestSchema, queryResultSchema } from "../modules/query/model";
 import {
@@ -21,6 +25,14 @@ import {
   type BackendIdentity,
   type BackendStatus,
 } from "../modules/backend/model";
+import {
+  embeddingRequestSchema,
+  embeddingResultSchema,
+  modelStatusSchema,
+  type ModelStatus,
+} from "../modules/embedding/dto";
+import { embeddingEncodingId } from "../modules/embedding/model";
+import type { EmbeddingResult } from "../modules/embedding/model";
 import { DEFAULT_BACKEND_SETTINGS } from "../config/model";
 import type { QueryRequest, QueryResult, StorageRoot } from "@lorelum/engine";
 
@@ -30,13 +42,20 @@ export interface CreateBackendClientOptions {
   /** Test-only alternate loopback HTTP address. */
   readonly baseUrl?: string;
   readonly buildIdentity: string;
+  /** Timeout for ordinary control and embedding requests. */
   readonly timeoutMs?: number;
+  /** Timeout budget for unloading the embedding model. */
+  readonly shutdownTimeoutMs?: number;
 }
 
 export interface BackendClient {
   identity(): Promise<BackendIdentity>;
   status(): Promise<BackendStatus>;
   stop(): Promise<BackendStatus>;
+  loadModel(options?: { onProgress?: (status: ModelStatus) => void }): Promise<ModelStatus>;
+  statusModel(): Promise<ModelStatus>;
+  unloadModel(): Promise<ModelStatus>;
+  embed(kind: "query" | "document", inputs: readonly string[]): Promise<EmbeddingResult>;
   query(root: StorageRoot, request: QueryRequest): Promise<QueryResult>;
 }
 
@@ -60,41 +79,6 @@ function isTimeout(error: unknown): boolean {
   );
 }
 
-async function readBoundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
-  const reader = response.body?.getReader();
-  if (reader === undefined) throw new BackendError("backend.failed");
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      // A response body is ordered; each chunk must be consumed before the next.
-      // eslint-disable-next-line no-await-in-loop
-      const next = await reader.read();
-      if (next.done) break;
-      size += next.value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) {
-        // eslint-disable-next-line no-await-in-loop
-        await reader.cancel();
-        throw new BackendError("backend.failed");
-      }
-      chunks.push(next.value);
-    }
-  } catch (error) {
-    if (error instanceof BackendError) throw error;
-    if (signal.aborted || isTimeout(error)) {
-      throw new BackendError("backend.deadline-exceeded", { cause: error });
-    }
-    throw new BackendError("backend.failed", { cause: error });
-  } finally {
-    reader.releaseLock();
-  }
-  try {
-    return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
-  } catch {
-    throw new BackendError("backend.failed");
-  }
-}
-
 function remoteError(body: unknown): Error | undefined {
   const parsed = errorSchema.safeParse(body);
   if (!parsed.success) return undefined;
@@ -106,6 +90,9 @@ function remoteError(body: unknown): Error | undefined {
       parsed.data.error.code as (typeof backendRemoteErrorCodes)[number],
     );
   }
+  if ((embeddingErrorCodes as readonly string[]).includes(parsed.data.error.code)) {
+    return new EmbeddingError(parsed.data.error.code as (typeof embeddingErrorCodes)[number]);
+  }
   return new BackendError("backend.failed");
 }
 
@@ -114,13 +101,21 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
   if (options.secret.length === 0) throw new TypeError("Backend secret must not be empty");
   if (options.buildIdentity.length === 0) throw new TypeError("Build identity must not be empty");
   const timeoutMs = options.timeoutMs ?? DEFAULT_BACKEND_SETTINGS.requestTimeoutMs;
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1)
-    throw new TypeError("Timeout must be a positive integer");
+  const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_BACKEND_SETTINGS.shutdownTimeoutMs;
+  for (const timeout of [timeoutMs, shutdownTimeoutMs]) {
+    if (!Number.isInteger(timeout) || timeout < 1)
+      throw new TypeError("Timeout must be a positive integer");
+  }
+  let expectedEncodingId: string | undefined;
   const baseUrl = validatedLoopbackUrl(options.baseUrl ?? BACKEND_URL);
 
-  const send = async (path: string, init: RequestInit = {}): Promise<unknown> => {
+  const send = async (
+    path: string,
+    init: RequestInit = {},
+    requestTimeoutMs = timeoutMs,
+  ): Promise<unknown> => {
     const url = new URL(path, baseUrl);
-    const signal = AbortSignal.timeout(timeoutMs);
+    const signal = AbortSignal.timeout(requestTimeoutMs);
     const response = await fetch(url, {
       ...init,
       redirect: "error",
@@ -133,14 +128,18 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
       }
       throw new BackendError("backend.unavailable", { cause: error });
     });
-    const body = await readBoundedJson(response, signal);
+    const body = await readBoundedJson(response, MAX_RESPONSE_BYTES).catch((error: unknown) => {
+      throw new BackendError(signal.aborted ? "backend.deadline-exceeded" : "backend.failed", {
+        cause: error,
+      });
+    });
     if (!response.ok) throw remoteError(body) ?? new BackendError("backend.failed");
     return body;
   };
 
   const identify = async (): Promise<BackendIdentity> => {
     const nonce = randomBytes(32).toString("hex");
-    const body = await send(`/internal/v1/identity?nonce=${nonce}`);
+    const body = await send(`${BACKEND_ROUTES.identity}?nonce=${nonce}`);
     const parsed = identitySchema.safeParse(body);
     if (!parsed.success) throw new BackendError("backend.port-conflict");
     const { proof, ...identity } = parsed.data;
@@ -150,70 +149,99 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
     if (
       identity.instanceId !== options.identity.instanceId ||
       identity.buildIdentity !== options.identity.buildIdentity ||
-      identity.controlVersion !== CONTROL_VERSION
+      identity.buildIdentity !== options.buildIdentity ||
+      identity.protocolVersion !== PROTOCOL_VERSION
     ) {
       throw new BackendError("backend.incompatible");
     }
     return parsed.data;
   };
 
-  const authorized = async (
-    strictBusinessBuild: boolean,
-  ): Promise<{
-    readonly headers: Record<string, string>;
-    readonly identity: BackendIdentity;
-  }> => {
-    const identity = await identify();
-    if (
-      strictBusinessBuild &&
-      (identity.buildIdentity !== options.buildIdentity ||
-        identity.businessVersion !== BUSINESS_VERSION)
-    ) {
-      throw new BackendError("backend.incompatible");
+  // One authenticated JSON request path; endpoint methods only supply their contract.
+  const request = async <T>(
+    path: string,
+    schema: z.ZodType<T>,
+    {
+      payload,
+      method = "GET",
+      timeout = timeoutMs,
+    }: {
+      payload?: unknown;
+      method?: "GET" | "POST";
+      timeout?: number;
+    } = {},
+  ): Promise<T> => {
+    await identify();
+    const headers: Record<string, string> = { authorization: `Bearer ${options.secret}` };
+    const init: RequestInit = { method, headers };
+    if (payload !== undefined) {
+      init.method = "POST";
+      headers["content-type"] = "application/json";
+      init.body = JSON.stringify(payload);
     }
-    return { headers: { authorization: `Bearer ${options.secret}` }, identity };
+    const body = await send(path, init, timeout);
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) throw new BackendError("backend.failed");
+    return parsed.data;
   };
 
-  const checkedStatus = (body: unknown, authenticated: BackendIdentity): BackendStatus => {
-    const parsed = statusSchema.safeParse(body);
+  const control = async (path: string, method: "GET" | "POST" = "GET"): Promise<BackendStatus> => {
+    const result = await request(path, statusSchema, {
+      method,
+    });
     if (
-      !parsed.success ||
-      parsed.data.instanceId !== authenticated.instanceId ||
-      parsed.data.buildIdentity !== authenticated.buildIdentity
-    ) {
+      result.instanceId !== options.identity.instanceId ||
+      result.buildIdentity !== options.identity.buildIdentity
+    )
       throw new BackendError("backend.failed");
-    }
-    return parsed.data;
+    return result;
   };
+
+  async function modelRequest(
+    path: string,
+    requestOptions: { payload?: unknown; timeout?: number } = {},
+  ) {
+    const result = await request(path, modelStatusSchema, requestOptions);
+    if (result.encodingId !== embeddingEncodingId(result.maxTokens))
+      throw new BackendError("backend.incompatible");
+    expectedEncodingId = result.encodingId;
+    return result;
+  }
 
   return Object.freeze({
     identity: identify,
-    async status() {
-      const authenticated = await authorized(false);
-      const body = await send("/internal/v1/status", { headers: authenticated.headers });
-      return checkedStatus(body, authenticated.identity);
+    status: () => control(BACKEND_ROUTES.status),
+    stop: () => control(BACKEND_ROUTES.stop, "POST"),
+    async loadModel({ onProgress } = {}) {
+      let result = await modelRequest(BACKEND_ROUTES.modelLoad, { payload: {} });
+      // Loading may include hours of useful transfer. Only each HTTP call has a deadline.
+      while (result.state === "loading") {
+        onProgress?.(result);
+        await Bun.sleep(250);
+        result = await modelRequest(BACKEND_ROUTES.modelStatus);
+      }
+      if (result.state === "failed") throw new EmbeddingError(result.error ?? "embedding.failed");
+      if (result.state !== "ready") throw new EmbeddingError("embedding.not-loaded");
+      return result;
     },
-    async stop() {
-      const authenticated = await authorized(false);
-      const body = await send("/internal/v1/stop", {
-        method: "POST",
-        headers: authenticated.headers,
-      });
-      return checkedStatus(body, authenticated.identity);
+    statusModel: () => modelRequest(BACKEND_ROUTES.modelStatus),
+    unloadModel: () =>
+      modelRequest(BACKEND_ROUTES.modelUnload, { payload: {}, timeout: shutdownTimeoutMs }),
+    async embed(kind, inputs) {
+      const payload = { kind, inputs };
+      if (!embeddingRequestSchema.safeParse(payload).success)
+        throw new EmbeddingError("embedding.input-invalid");
+      if (!expectedEncodingId) await modelRequest(BACKEND_ROUTES.modelStatus);
+      const result = await request(BACKEND_ROUTES.embeddings, embeddingResultSchema, { payload });
+      if (result.vectors.length !== inputs.length || result.encodingId !== expectedEncodingId)
+        throw new BackendError("backend.failed");
+      return result;
     },
-    async query(root, request) {
-      const payload = { storageRoot: root.rootPath, query: request };
+    async query(root, query) {
+      const payload = { storageRoot: root.rootPath, query };
       if (!queryRequestSchema.safeParse(payload).success)
         throw new BackendRemoteError("usage.invalid");
-      const authenticated = await authorized(true);
-      const body = await send("/internal/v1/query", {
-        method: "POST",
-        headers: { ...authenticated.headers, "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const parsed = queryResultSchema.safeParse(body);
-      if (!parsed.success) throw new BackendError("backend.failed");
-      return parsed.data;
+      return request(BACKEND_ROUTES.query, queryResultSchema, { payload });
     },
   } satisfies BackendClient);
 }

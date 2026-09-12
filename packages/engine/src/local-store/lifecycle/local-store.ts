@@ -1,5 +1,4 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { resolveLorelumPaths } from "@lorelum/config";
 
 import type { ValidationIssue } from "@lorelum/format";
 
@@ -30,7 +29,7 @@ export interface StorageRoot {
 
 /** Resolve the default user-level storage root. */
 export function defaultStorageRoot(): StorageRoot {
-  return { rootPath: join(homedir(), ".lorelum") };
+  return { rootPath: resolveLorelumPaths().rootDirectory };
 }
 
 export interface OpenResult {

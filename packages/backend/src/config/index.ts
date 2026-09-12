@@ -18,3 +18,12 @@ export {
   daemonEnvironment,
   type DaemonLaunch,
 } from "./launch";
+export {
+  embeddingConfigSchema,
+  MAX_SERIALIZED_EMBEDDING_BYTES,
+  resolveEmbeddingConfig,
+  type EmbeddingConfig,
+  type ResolvedEmbeddingConfig,
+  embeddingTokenLimits,
+} from "./embedding";
+export { defaultBackendConfigSections } from "./defaults";

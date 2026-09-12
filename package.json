@@ -13,14 +13,17 @@
     "lint": "oxlint .",
     "fmt": "oxfmt --write .",
     "fmt:check": "oxfmt --check .",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' typecheck && tsc --noEmit -p scripts/release/tsconfig.json",
+    "build:native": "bun scripts/native/build-embedding.ts",
     "build:cli": "bun build --compile packages/cli/src/main.ts --outfile dist/lore",
+    "build:release-staging": "bun scripts/release/build.ts",
+    "build:release": "bun scripts/release/package.ts",
     "build:site": "bun run --filter @lorelum/site build",
     "deploy:site": "cd apps/site && npx wrangler deploy",
     "versions:site": "cd apps/site && npx wrangler versions upload"
   },
   "devDependencies": {
-    "@types/bun": "1.3.8",
+    "@types/bun": "1.4.2",
     "oxfmt": "0.59.0",
     "oxlint": "1.74.0",
     "typescript": "5.7.2"
@@ -28,5 +31,5 @@
   "overrides": {
     "js-yaml": "4.3.1"
   },
-  "packageManager": "bun@1.3.8"
+  "packageManager": "bun@1.4.2"
 }

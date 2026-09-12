@@ -3,14 +3,11 @@ import { expect, test } from "bun:test";
 
 import { BackendError, type BackendStatus } from "@lorelum/backend/protocol";
 
-import { run } from "../main.js";
-import {
-  validateJsonSchema,
-  validateProtocolSchema,
-} from "../output/protocol-schema.test-helper.js";
-import { protocolResponseSchema } from "../output/protocol.js";
-import { describeCommand, snapshotCommandDefinitions } from "../registry.js";
-import { createBackendCommands, type BackendCommandServices } from "./control-commands.js";
+import { run } from "../main";
+import { validateJsonSchema, validateProtocolSchema } from "../output/protocol-schema.test-helper";
+import { protocolResponseSchema } from "../output/protocol";
+import { describeCommand, snapshotCommandDefinitions } from "../registry";
+import { createBackendCommands, type BackendCommandServices } from "./control-commands";
 
 class MemoryWriter {
   value = "";
@@ -127,4 +124,24 @@ test("discovery's supported schema accepts starting and rejects unknown states",
   expect(
     validateJsonSchema({ ...ready, state: "arbitrary" }, definition!.resultSchema).length,
   ).toBeGreaterThan(0);
+});
+
+test("only backend start asks the config layer to initialize files", async () => {
+  const initialization: (boolean | undefined)[] = [];
+  const definitions = createBackendCommands({
+    createSupervisor: async (options) => {
+      initialization.push(options?.initialize);
+      return { start: async () => ready, status: async () => ready, stop: async () => ready };
+    },
+  });
+  for (const command of ["start", "status", "stop"]) {
+    expect(
+      // eslint-disable-next-line no-await-in-loop
+      await run(["backend", command], {
+        registry: snapshotCommandDefinitions(definitions),
+        stdout: new MemoryWriter(),
+      }),
+    ).toBe(0);
+  }
+  expect(initialization).toEqual([true, false, false]);
 });

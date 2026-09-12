@@ -1,71 +1,68 @@
-# Control the local backend
+# Backend 命令
 
-`lore backend start`, `lore backend status`, and `lore backend stop` manage the local Lorelum backend. The backend listens only on `127.0.0.1:26186`; these commands use its private local control protocol rather than a public network API.
+`lore backend start/status/stop` 管理固定监听 `127.0.0.1:26186` 的本地后台服务。命令不使用 LocalStore，`--store-root` 不改变服务地址、模型或配置来源。
+
+## 启动
 
 ```sh
 lore backend start
-lore backend status
-lore backend stop
-lore describe backend.start
 ```
 
-`start` waits until one authenticated backend instance reports `ready`. It is safe to repeat while that same compatible instance is already running. `status` has no start or model-loading side effect. `stop` asks the verified instance to exit and waits for the result. A command exits with `0` only after the requested state has been observed.
+首次 start 由 CLI 应用组装层调用独立 config 包创建缺失的共享配置文件；已有配置不会覆盖。等待兼容且经过认证的 backend 报告 ready 后退出 `0`。重复启动复用已有实例；启动不会下载或加载模型。随后可执行 [model load](model.md)。
 
-The successful protocol envelope contains one of these status values:
+成功输出是单行 JSON，展开后例如：
 
 ```json
 {
-  "state": "ready",
-  "model": "unloaded",
-  "instanceId": "...",
-  "buildIdentity": "..."
+  "protocolVersion": 1,
+  "toolVersion": "0.0.0",
+  "command": "backend.start",
+  "ok": true,
+  "data": {
+    "state": "ready",
+    "model": "unloaded",
+    "instanceId": "<本次实例 ID>",
+    "buildIdentity": "<构建身份>"
+  }
 }
 ```
 
-`instanceId` and `buildIdentity` are included when an instance exists. The first backend stage always reports `model: "unloaded"`; loading an embedding model is a later stage. These commands do not read a LocalStore, so the global `--store-root` option has no effect on them.
+版本和身份值以实际输出为准。CLI envelope version 1 与内部 control/business version 3 是独立版本。
 
-## Configuration
+## 状态
 
-The optional file `~/.lorelum/config.yaml` is shared by Lorelum modules. Its `backend` section accepts these settings in milliseconds:
-
-```yaml
-backend:
-  startupTimeoutMs: 10000
-  requestTimeoutMs: 5000
-  shutdownTimeoutMs: 5000
+```sh
+lore backend status
 ```
 
-These are also the defaults. Each value must be an integer from 1 to 120000. Environment variables override individual file values:
+只读，不启动后台进程、不加载或扫描模型。没有服务时成功 data 为 `{"state":"stopped","model":"unloaded"}`；运行时给出 backend state、model state、instanceId 和 buildIdentity。模型失败时 backend 仍可 ready，详细原因看 `lore model status`。
 
-| Setting                   | Environment variable                  |
-| ------------------------- | ------------------------------------- |
-| Startup timeout           | `LORELUM_BACKEND_STARTUP_TIMEOUT_MS`  |
-| Control request timeout   | `LORELUM_BACKEND_REQUEST_TIMEOUT_MS`  |
-| Graceful shutdown timeout | `LORELUM_BACKEND_SHUTDOWN_TIMEOUT_MS` |
+## 停止
 
-Each control invocation reads the configuration. The running daemon keeps its startup settings until it is stopped and restarted; repeated `start` does not reload them. Invalid YAML, unknown keys within `backend`, and invalid backend values fail with `backend.config-invalid`, even if another source overrides the invalid value. A missing or empty file uses defaults and is not created automatically. Other top-level sections remain available to their owning modules. The former experimental `backend.json` is no longer read; move its values under `backend` in `config.yaml`.
+```sh
+lore backend stop
+```
 
-The listening address remains fixed. The runtime directory and private launch handshake are separate from this user configuration.
+请求经过身份验证的实例停止，取消下载或卸载模型并等待 daemon 退出。只有确认停止后才退出 `0`，data 为 stopped/unloaded。没有服务时可重复调用；不会按端口或名称终止陌生进程。下载片段保留，下次 model load 可恢复。
 
-## Errors and exit codes
+## 配置与错误
 
-Failures return the standard CLI envelope with exit code `2`. Callers should branch on `error.code`, not its message.
+配置读取、默认值、环境变量和生效时机见 [配置入口](../configuration/README.md)、[Backend 配置](../configuration/backend.md)。backend 三个命令会读取并验证配置；修改配置不会热更新运行实例，重复 start 也不会刷新快照。
 
-| Code                        | Meaning                                                            |
-| --------------------------- | ------------------------------------------------------------------ |
-| `backend.unavailable`       | No verified local backend is running.                              |
-| `backend.port-conflict`     | The configured address belongs to an unverified process.           |
-| `backend.incompatible`      | The running backend has an incompatible build or protocol.         |
-| `backend.unauthorized`      | The control handshake failed.                                      |
-| `backend.invalid-request`   | The local control request was invalid.                             |
-| `backend.busy`              | The backend is starting, stopping, or cannot accept this request.  |
-| `backend.deadline-exceeded` | The backend did not reach the requested state in time.             |
-| `backend.config-invalid`    | The backend configuration is invalid.                              |
-| `backend.state-invalid`     | Local lifecycle state cannot be safely recovered.                  |
-| `backend.failed`            | The backend operation failed without a more specific public cause. |
+失败退出 `2`，输出 `ok:false` 的 [CLI envelope](README.md)。常见错误：
 
-Control requests contain no Store paths or query text; the client authenticates using the private runtime credential. They neither start a model runtime nor change query behavior.
+| code | 处理 |
+| --- | --- |
+| `backend.port-conflict` | 固定端口属于未验证的服务，检查占用 |
+| `backend.incompatible` | 客户端与后台 build 或协议不匹配，检查是否混用了不同工作目录的程序 |
+| `backend.config-invalid` | 修正 YAML、未知字段或越界值 |
+| `backend.state-invalid` | 私有运行记录或权限无法安全使用 |
+| `backend.deadline-exceeded` | 操作未在配置预算内达到目标状态 |
+| `backend.unauthorized` | 身份或认证校验失败 |
+| `backend.unavailable`、`backend.busy`、`backend.failed` | 查看服务状态，按错误原因恢复 |
 
-## Implementation scope
+## 构建与支持范围
 
-This stage provides a resident keyword-query endpoint and process control. Existing CLI commands still execute through their original Engine path; reducing full CLI startup cost is separate work. No model is loaded. The process supervisor currently targets macOS/Linux; other platforms are not verified.
+源码开发先执行 `bun run build:native`；native candidate 位于 `packages/backend/.artifacts/native/embedding/darwin-arm64/`，由源码 backend 直接校验和启动。可安装的编译版必须通过 `bun run build:release` 生成，并保留 archive 内完整的 `native/darwin-arm64/` 目录，不能仅复制 `lore`。`bun run build:cli` 只生成通用 CLI binary，不携带配套 native runtime，不能作为 embedding 的发行构建。native manifest 和许可证说明见 [native 构建说明](../../native/embedding/README.md)。
+
+当前 embedding 支持 macOS arm64，已在 M4 验证。Windows native、进程身份/ACL 和端到端验收尚未完成；Linux embedding 不在当前交付范围。普通 `lore query` 仍走原有 Engine 路径，semantic index/query 接入另行实施。
