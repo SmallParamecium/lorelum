@@ -1,7 +1,7 @@
 # ADR 0004: Agent-first CLI protocol
 
 - **Date:** 2026-07-23
-- **Status:** Proposed
+- **Status:** Accepted
 - **Related:** ADR 0002 (Bun + TypeScript toolchain), issue #20 (split from issue #13), issue #25 (Help interaction), issue #29 (command-level JSON/text output)
 
 ## Context
@@ -16,7 +16,7 @@ The protocol must also preserve the package boundary. Commander, process I/O, ou
 
 ### Business-command JSON protocol
 
-The candidate v1 machine protocol is a compact, single-line JSON envelope for business-command results. In JSON mode, each completed invocation writes exactly one JSON line to stdout; optional diagnostic logs go only to stderr. Each response has `protocolVersion`, `toolVersion`, `command`, `ok`, and exactly one of `data` or `error`. The CLI exports a JSON Schema for the envelope; each command definition supplies the schema for `data`.
+The v1 machine protocol is a compact, single-line JSON envelope for business-command results. In JSON mode, each completed invocation writes exactly one JSON line to stdout; optional diagnostic logs go only to stderr. Each response has `protocolVersion`, `toolVersion`, `command`, `ok`, and exactly one of `data` or `error`. The CLI exports a JSON Schema for the envelope; each command definition supplies the schema for `data`.
 
 ```json
 {
@@ -43,7 +43,7 @@ JSON v1 is compact, has no pretty-print mode, and contains no ANSI, spinner, pro
 ### Help and machine discovery
 
 - A bare `lore` invocation retains its existing root capability response; this ADR does not change its no-argument behavior.
-- Successful `-h` / `--help` and `lore help [command path]` invocations write plain text to stdout, exit `0`, and do not emit a business-result JSON envelope. Valid Help remains text even when `--human` or `--json` is present. Future `--format` or `--agent` support must not turn a successful Help invocation into business JSON. Help parsing, wording, hierarchy, and Help-specific errors are governed by issue #25.
+- The intended Help surface is a separate, fixed-text interaction: successful `-h` / `--help` and `lore help [command path]` invocations should write plain text to stdout and remain outside the business-result JSON envelope. Its parsing, wording, hierarchy, and Help-specific errors are governed by issue #25. This business-output rollout does not implement that surface; the current CLI retains its existing machine-readable `describe` response for valid `--help` invocations.
 - `lore describe [command]` is the explicit machine-readable command-discovery interface and returns the JSON envelope. Discovery exposes command IDs, arguments/options, output formats/defaults, result schema, visible error codes, and exit behavior.
 
 Malformed invocations are rejected before a static Help or version response can hide the error. Usage messages must not echo raw arguments. Help-specific error presentation follows issue #25; business-command format and error routing follow the sections below.
@@ -68,10 +68,13 @@ The v1 rollout matrix is:
 | `describe` | JSON | JSON only |
 | `get` | JSON, text | Target default is text. Keep JSON as the default until machine callers are pinned to JSON and the compatibility checks pass; then switch to text. |
 | `list`, `install`, `--version` | JSON, text | JSON |
-| `query` and other commands not yet adapted | JSON | JSON only/default until a separately reviewed text renderer is complete |
+| `query` | JSON, text | JSON by default; explicit text after its CLI renderer and tests are complete |
+| Other commands not yet adapted | JSON | JSON only/default until a separately reviewed text renderer is complete |
 | Help invocations | Text | Fixed text, governed by issue #25; not negotiated as a business-result format |
 
 For `get`, text mode writes the complete retrieved lore body to stdout without a JSON envelope, title/header, source or Store metadata, or code fence. It must not truncate or rewrite the body. The JSON `data` remains the complete structured result, including identifiers and metadata. Internal machine callers must pass `--format=json` (or the declared JSON preset) rather than rely on the transitional default. If the compatibility gate cannot be completed, retain JSON as the default for this release instead of silently changing caller behavior.
+
+For `query`, text mode presents matched Practice summaries in the engine's result order, retaining their stable IDs, titles, and task-relevant summary fields. An empty result must be stated explicitly rather than rendered as ambiguous blank output. A `preparing` result must display its message and preserve the existing exit code `1`. JSON remains the complete machine contract, including fields such as `contentDigest`, semantic `profileId`/`coverage`, and `preparationId`; the text projection must not alter retrieval behavior, ranking, or exit-code semantics.
 
 Use `--format json|text` for explicit selection; `--json` and `--human` are aliases. For business-result commands, precedence is:
 
@@ -85,7 +88,7 @@ Text is a presentation projection of the same completed business result, not a s
 
 ### Errors and exit codes
 
-Exit codes are `0` for success, `1` for a completed result that reports a blocking domain finding, and `2` for usage or runtime failures. Exit code `1` is only used for a completed result; failure envelopes use exit code `2`. Each command's `errorCodes` is the allowlist for visible errors. An undeclared handler error is normalized to `runtime.unexpected`, which every command must declare.
+Exit codes are `0` for a ready successful result, `1` for a successfully returned non-ready/action-required result or a completed result with a blocking domain finding, and `2` for usage or runtime failures. For example, semantic `query` may return `ok: true` with `state: "preparing"` and exit `1`; exit `1` does not mean the CLI invocation failed. Failure envelopes use exit code `2`. Each command's `errorCodes` is the allowlist for visible errors. An undeclared handler error is normalized to `runtime.unexpected`, which every command must declare.
 
 In JSON mode, success and failure envelopes go to stdout. In negotiated text mode, successful output goes to stdout and stable usage/domain diagnostics go to stderr. Format-negotiation failures use one JSON fallback envelope on stdout and exit `2`, so no invocation produces a half-JSON/half-text result. Diagnostic logs go to stderr. Help-specific errors continue to follow issue #25.
 
@@ -93,10 +96,10 @@ Command options model flags, values, defaults, and required presence separately.
 
 ## Consequences
 
-**Positive:** Agents and scripts retain a stable JSON envelope and discoverable schemas; people get direct text Help and a useful text-first `get`; command-specific defaults can evolve without TTY-dependent behavior; domain packages remain independent of CLI process details.
+**Positive:** Agents and scripts retain a stable JSON envelope and discoverable schemas; people get direct text Help and useful text projections for `get` and explicitly requested `query`; query remains JSON by default for machine compatibility; command-specific defaults can evolve without TTY-dependent behavior; domain packages remain independent of CLI process details.
 
-**Negative / accepted risk:** JSON and text require separate rendering tests and explicit compatibility checks when a command default changes. Help is intentionally outside business-result format negotiation, so future global format flags must preserve that exception. A `get` default change is blocked until its machine callers are pinned to JSON and the migration gate passes.
+**Negative / accepted risk:** JSON and text require separate rendering tests and explicit compatibility checks when a command default changes. Query text rendering must cover ready semantic/keyword results, empty results, and the `preparing` variant without changing its JSON schema or exit code. Help is intentionally outside business-result format negotiation, so future global format flags must preserve that exception. A `get` default change is blocked until its machine callers are pinned to JSON and the migration gate passes.
 
-The protocol remains **Proposed** until maintainers accept this ADR during review. No business command needs to be implemented to review or accept the outer protocol contract.
+**Acceptance:** Maintainers accepted this ADR on 2026-09-14. Acceptance freezes the protocol and compatibility rules; individual command renderers may still roll out separately according to the matrix above.
 
-**Follow-ups:** implement registry format metadata and `describe` discovery, add text renderers by command under issue #29, coordinate Help option precedence with issue #25, migrate machine callers before changing the `get` default, and validate the contract with unit, process-level, and compiled-binary tests.
+**Follow-ups:** add text renderers to other commands only when their projection and tests are complete; migrate machine callers before considering a `get` default change; and keep any Help-specific error behavior aligned with issue #25. The initial business-result rollout for `get`, `list`, `install`, `query`, and `--version` is implemented and validated in the local worktree; Help parsing/rendering remains deferred to issue #25 and is not part of this rollout. This does not imply that the changes have been merged or released.

@@ -13,6 +13,7 @@ import {
 import type { StorageRoot } from "@lorelum/engine";
 
 import type { JsonSchema, JsonValue } from "../output/protocol";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry";
 import { CliError, frameworkErrorCodes } from "../runtime/errors";
 import { resolveInvocationStorageRoot } from "../store/storage-root";
@@ -113,6 +114,7 @@ function command(
     summary,
     positionals: isOperation ? [{ name: "operation-id", required: true }] : [],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: isStatus ? indexStatusResultSchema : indexOperationResultSchema,
     errorCodes: [
       ...frameworkErrorCodes,

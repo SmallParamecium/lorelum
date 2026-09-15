@@ -17,6 +17,12 @@ Lorelum CLI 的普通机器接口是单行 JSON envelope。成功输出包含 `c
 
 使用 `lore --version` 查询 CLI 版本；`--help` 和 `--log-level` 是全局选项。需要 Store 的命令支持 `--store-root <path>`；backend/model 命令不读取或修改 LocalStore，传入该选项不会改变它们的模型来源。
 
+## Output formats
+
+JSON remains the default format, including for commands that also support text. Select explicitly with `--format=json|text`; `--json` and `--human` are aliases. `--agent` prefers JSON unless a format was explicitly selected. Format selection does not depend on whether stdout is a terminal or a pipe. Help parsing and rendering are intentionally outside this rollout and remain governed by issue #25. In the current CLI, `-h` / `--help` keeps the existing machine-readable `describe` response; this PR does not add a `lore help` command or fixed-text Help surface. Use `lore describe` for explicit machine-readable capabilities.
+
+In this rollout, explicit text is available for `get`, `pack list`, `pack install`, `query`, and `--version`. Other commands remain JSON-only and reject a text request. Each command documents what its text view contains; for example, `get --format=text` writes only the complete Practice body, while `query --format=text` writes ordered Practice summaries. After text has been selected successfully, ordinary command failures go to stderr; invalid or conflicting format requests use the framework's JSON fallback.
+
 ## Protocol versions
 
 CLI envelope 当前为 version 1；backend 内部协议当前为 version 3。内部协议对所有请求使用一致的实例身份和 build 校验。

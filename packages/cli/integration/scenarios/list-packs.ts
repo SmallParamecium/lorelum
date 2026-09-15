@@ -23,6 +23,13 @@ export async function verifyListPacksScenario(
     { name: "minimal-pack", version: "1.0.0", practiceCount: 1 },
   ]);
 
+  const listedText = await runList(compiledBinary, fixture.storageRoot, { format: "text" });
+  assert.equal(listedText.exitCode, 0);
+  assert.equal(listedText.stderr, "");
+  assert(listedText.stdout.includes("Store snapshot: generation"));
+  assert(listedText.stdout.includes("integration-pack@1.0.0 (2 Practices)"));
+  assert.equal(listedText.stdout.includes('"ok"'), false);
+
   const details = await runList(compiledBinary, fixture.storageRoot, { details: true });
   assert.equal(details.exitCode, 0);
   assert.equal(details.stderr, "");
@@ -53,6 +60,15 @@ export async function verifyListPacksScenario(
         value.id === fixture.primaryPracticeId,
     ),
   );
+
+  const catalogText = await runList(compiledBinary, fixture.storageRoot, {
+    packName: "integration-pack",
+    format: "text",
+  });
+  assert.equal(catalogText.exitCode, 0);
+  assert.equal(catalogText.stderr, "");
+  assert(catalogText.stdout.includes(fixture.primaryPracticeId));
+  assert.equal(catalogText.stdout.includes('"ok"'), false);
 
   const emptyStoreRoot = join(workingDirectory, "empty-list-store");
   const emptyCatalog = await runList(compiledBinary, emptyStoreRoot);

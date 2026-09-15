@@ -95,12 +95,20 @@ test("describes the LocalStore-backed Pack catalog command contract", () => {
     positionals: [{ name: "pack", required: false }],
     options: [
       { name: "-h, --help", required: false },
+      { name: "--format <format>", required: false, values: ["json", "text"] },
+      { name: "--json", required: false },
+      { name: "--human", required: false },
+      { name: "--agent", required: false },
       { name: "--log-level <level>", required: false },
       { name: "--store-root <path>", required: false },
       { name: "--details", required: false },
     ],
+    output: { formats: ["json", "text"], default: "json" },
     errorCodes: [
       "usage.invalid",
+      "usage.format-invalid",
+      "usage.format-conflict",
+      "usage.format-unsupported",
       "runtime.unexpected",
       "store.busy",
       "store.recovery-required",
@@ -121,6 +129,25 @@ test("returns all list modes through their result schema", async () => {
   expect(response).toMatchObject({ command: "pack.list", ok: true, data: packsResult });
   let description = describeCommand("pack.list") as { resultSchema: JsonSchema };
   expect(validateJsonSchema(response.data, description.resultSchema)).toEqual([]);
+
+  const textOutput = new MemoryWriter();
+  expect(
+    await run(["pack", "list", "--format=text"], { registry: definitions, stdout: textOutput }),
+  ).toBe(0);
+  expect(textOutput.value).toContain("Store snapshot: generation 1, effective revision 2");
+  expect(textOutput.value).toContain("agentic-coding@0.3.0 (31 Practices)");
+  expect(textOutput.value).not.toContain('"ok"');
+
+  const catalogText = new MemoryWriter();
+  expect(
+    await run(["pack", "list", "agentic-coding", "--human"], {
+      registry: definitions,
+      stdout: catalogText,
+    }),
+  ).toBe(0);
+  expect(catalogText.value).toContain("agentic-coding@0.3.0");
+  expect(catalogText.value).toContain("agentic-coding.testing");
+  expect(catalogText.value).not.toContain('"ok"');
 
   stdout.value = "";
   expect(await run(["pack", "list", "agentic-coding"], { registry: definitions, stdout })).toBe(0);
@@ -189,7 +216,7 @@ test("rejects conflicting or extra Pack catalog arguments before service dispatc
   ]);
 
   const invocations = [
-    { args: ["pack", "list", "agentic-coding", "extra"], command: "unknown" },
+    { args: ["pack", "list", "agentic-coding", "extra"], command: "pack.list" },
     { args: ["pack", "list", "agentic-coding", "--details"], command: "pack.list" },
   ];
   const results = await Promise.all(

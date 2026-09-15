@@ -77,8 +77,7 @@ anti_patterns:
 ---
 # Persisted guidance
 
-This complete body must survive installation and retrieval.
-`,
+This complete body must survive installation and retrieval.`,
     ),
   ]);
 }

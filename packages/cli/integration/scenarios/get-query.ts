@@ -30,7 +30,7 @@ export async function verifyGetAndQueryScenario(
     tech_stack: ["bun", "typescript"],
     applies_when: "exercising the compiled get command",
     severity: "warn",
-    body: "# Persisted guidance\n\nThis complete body must survive installation and retrieval.\n",
+    body: "# Persisted guidance\n\nThis complete body must survive installation and retrieval.",
     anti_patterns: [
       {
         id: "integration.retrieval.skip",
@@ -45,6 +45,21 @@ export async function verifyGetAndQueryScenario(
     { packName: "integration-pack", sourcePath: "practices/retrieval-demo.md" },
   ]);
 
+  const text = await runGet(
+    compiledBinary,
+    fixture.primaryPracticeId,
+    fixture.storageRoot,
+    "after",
+    "text",
+  );
+  assert.equal(text.exitCode, 0);
+  assert.equal(
+    text.stdout,
+    "# Persisted guidance\n\nThis complete body must survive installation and retrieval.",
+  );
+  assert.equal(text.stdout.endsWith("\n"), false);
+  assert.equal(text.stderr, "");
+
   const keyword = await runQuery(compiledBinary, "retrieval OR", fixture.storageRoot, 3);
   assert.equal(keyword.exitCode, 0);
   assert.equal(keyword.stderr, "");
@@ -55,6 +70,23 @@ export async function verifyGetAndQueryScenario(
     (value) => isRecord(value) && value.practiceId === fixture.primaryPracticeId,
   );
   assert(isRecord(keywordHit));
+
+  const keywordText = await runQuery(
+    compiledBinary,
+    "retrieval OR",
+    fixture.storageRoot,
+    3,
+    "keyword",
+    "text",
+  );
+  assert.equal(keywordText.exitCode, 0);
+  assert.equal(keywordText.stderr, "");
+  assert(keywordText.stdout.includes("Query mode: keyword"));
+  assert(keywordText.stdout.includes(fixture.primaryPracticeId + " — Persisted retrieval demo"));
+  assert(keywordText.stdout.includes("Applies when: exercising the compiled get command"));
+  assert.equal(keywordText.stdout.includes("contentDigest"), false);
+  assert.equal(keywordText.stdout.includes('"ok"'), false);
+
   const queriedGet = await runGet(compiledBinary, fixture.primaryPracticeId, fixture.storageRoot);
   const queriedGetData = requireSuccessData(parseSingleResponse(queriedGet.stdout), "get");
   assert.equal(keywordHit.contentDigest, queriedGetData.contentDigest);
@@ -72,6 +104,18 @@ export async function verifyGetAndQueryScenario(
   const noMatches = await runQuery(compiledBinary, "zzzxylophone", fixture.storageRoot);
   assert.equal(noMatches.exitCode, 0);
   assert.deepEqual(requireSuccessData(parseSingleResponse(noMatches.stdout), "query").results, []);
+
+  const noMatchesText = await runQuery(
+    compiledBinary,
+    "zzzxylophone",
+    fixture.storageRoot,
+    undefined,
+    "keyword",
+    "text",
+  );
+  assert.equal(noMatchesText.exitCode, 0);
+  assert.equal(noMatchesText.stderr, "");
+  assert.equal(noMatchesText.stdout, "Query mode: keyword\nNo matching Practices.\n");
 
   const before = await runGet(
     compiledBinary,
@@ -94,6 +138,20 @@ export async function verifyGetAndQueryScenario(
   assert.equal(absent.exitCode, 2);
   assert.equal(absent.stderr, "");
   requireFailureCode(parseSingleResponse(absent.stdout), "get", "practice.not-found");
+
+  const absentText = await runGet(
+    compiledBinary,
+    "integration.retrieval.absent",
+    fixture.storageRoot,
+    "after",
+    "text",
+  );
+  assert.equal(absentText.exitCode, 2);
+  assert.equal(absentText.stdout, "");
+  assert.equal(
+    absentText.stderr,
+    "error[practice.not-found]: The requested Practice was not found in the selected local Store.\n",
+  );
 
   const isolatedRoot = join(workingDirectory, "isolated-store");
   await mkdir(isolatedRoot, { recursive: true });

@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 
-import { protocolResponseSchema, renderFailure, renderSuccess, toolVersion } from "./protocol.js";
+import {
+  protocolResponseSchema,
+  renderFailure,
+  renderSuccess,
+  renderTextSuccess,
+  toolVersion,
+} from "./protocol.js";
 import goldenEnvelopes from "./protocol-envelope.fixture.json";
 import { validateProtocolSchema } from "./protocol-schema.test-helper.js";
 
@@ -26,6 +32,16 @@ test("renders one JSON line for successful protocol responses", () => {
     data: { name: "lore" },
   });
   expect(validateProtocolSchema(JSON.parse(writer.value), protocolResponseSchema)).toEqual([]);
+});
+
+test("text success defaults to a line boundary but can preserve exact output", () => {
+  const lineWriter = new MemoryWriter();
+  renderTextSuccess(lineWriter, "line-oriented output");
+  expect(lineWriter.value).toBe("line-oriented output\n");
+
+  const exactWriter = new MemoryWriter();
+  renderTextSuccess(exactWriter, "body without a final line feed", "verbatim");
+  expect(exactWriter.value).toBe("body without a final line feed");
 });
 
 test("rejects non-JSON-safe success data before writing", () => {

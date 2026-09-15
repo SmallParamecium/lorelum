@@ -196,6 +196,53 @@ test("installs from an explicit Registry repository and is idempotent", async ()
   }
 });
 
+test("install supports explicit text and preserves mutation and index status", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lorelum-install-text-"));
+  try {
+    const storageRoot = join(directory, "store");
+    const fixture = createServices(await createPack(directory), storageRoot);
+    const definitions = snapshotCommandDefinitions([createInstallCommand(fixture.services)]);
+    const stdout = new MemoryWriter();
+    const stderr = new MemoryWriter();
+
+    expect(
+      await run(
+        [
+          "pack",
+          "install",
+          "agentic-coding@0.1.0",
+          "--registry",
+          "acme/team-packs",
+          "--format=text",
+        ],
+        { registry: definitions, stdout, stderr },
+      ),
+    ).toBe(0);
+    expect(stdout.value).toContain("Installed agentic-coding@0.1.0.");
+    expect(stdout.value).toContain("Store snapshot: generation 1, effective revision 1");
+    expect(stdout.value).toContain("Added: agentic-coding.installation.placeholder");
+    expect(stdout.value).toContain("Semantic index: ready (1 vectors).");
+    expect(stdout.value).not.toContain('"ok"');
+    expect(stderr.value).toBe("");
+
+    const idempotentStdout = new MemoryWriter();
+    const idempotentStderr = new MemoryWriter();
+    expect(
+      await run(
+        ["pack", "install", "agentic-coding@0.1.0", "--registry", "acme/team-packs", "--human"],
+        { registry: definitions, stdout: idempotentStdout, stderr: idempotentStderr },
+      ),
+    ).toBe(0);
+    expect(idempotentStdout.value).toContain("Already installed agentic-coding@0.1.0.");
+    expect(idempotentStdout.value).toContain("Practice changes: none.");
+    expect(idempotentStdout.value).toContain("Semantic index: ready (1 vectors).");
+    expect(idempotentStdout.value).not.toContain('"ok"');
+    expect(idempotentStderr.value).toBe("");
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("uses an explicit global Store root without touching the default Store", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lorelum-install-command-"));
   try {

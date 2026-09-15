@@ -39,6 +39,14 @@ async function verifySourceEntrypoint(bunExecutable: string, directory: string):
   assert.deepEqual(selectProtocolFields(source.stdout), { command: "version", ok: true });
   assert.equal(source.stderr, "");
 
+  const explicitJson = await runProcess([bunExecutable, entrypoint, "--format=json"]);
+  assert.equal(explicitJson.exitCode, 0);
+  assert.deepEqual(selectProtocolFields(explicitJson.stdout), {
+    command: "describe",
+    ok: true,
+  });
+  assert.equal(explicitJson.stderr, "");
+
   const hook = await runProcess(
     [
       bunExecutable,
@@ -89,6 +97,28 @@ async function verifyCompiledEntrypoint(executable: string, directory: string): 
   assert.equal(binary.exitCode, 0);
   assert.deepEqual(selectProtocolFields(binary.stdout), { command: "version", ok: true });
   assert.equal(binary.stderr, "");
+
+  const versionText = await runProcess([executable, "--version", "--format=text"]);
+  assert.equal(versionText.exitCode, 0);
+  assert.match(versionText.stdout, /^Lorelum \S+ \(protocol \d+\)\r?\n$/);
+  assert.equal(versionText.stderr, "");
+
+  const explicitJson = await runProcess([executable, "--json"]);
+  assert.equal(explicitJson.exitCode, 0);
+  assert.deepEqual(selectProtocolFields(explicitJson.stdout), {
+    command: "describe",
+    ok: true,
+  });
+  assert.equal(explicitJson.stderr, "");
+
+  const unsupportedText = await runProcess([executable, "--human"]);
+  assert.equal(unsupportedText.exitCode, 2);
+  assert.deepEqual(selectProtocolFields(unsupportedText.stdout), {
+    command: "lore",
+    errorCode: "usage.format-unsupported",
+    ok: false,
+  });
+  assert.equal(unsupportedText.stderr, "");
 
   const discovery = await runProcess([executable]);
   assert.equal(discovery.exitCode, 0);
