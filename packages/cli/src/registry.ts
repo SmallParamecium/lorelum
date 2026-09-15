@@ -130,7 +130,7 @@ const globalOptions: readonly CommandOption[] = [
   {
     longFlag: "--help",
     shortFlag: "-h",
-    description: "Show human-readable help for the selected command.",
+    description: "Return machine-readable command capabilities.",
     optionRequired: false,
     behavior: "help",
     scope: "global",
@@ -673,9 +673,6 @@ function assertRegistryMetadata(definitions: readonly CommandDefinition[]): void
   for (const definition of definitions) {
     if (definition.name === rootCommand.name) {
       throw new Error(`Command name "${definition.name}" is reserved for the root command.`);
-    }
-    if (definition.name === "help") {
-      throw new Error('Command name "help" is reserved for framework Help.');
     }
     if (names.has(definition.name)) {
       throw new Error(`Command name "${definition.name}" is declared more than once.`);

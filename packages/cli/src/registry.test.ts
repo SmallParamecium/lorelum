@@ -10,7 +10,7 @@ import {
 } from "./registry.js";
 import { CliError, cliErrorCodes, frameworkErrorCodes } from "./runtime/errors.js";
 import { Logger } from "./runtime/logger.js";
-import { jsonOnlyOutput } from "./output/formats.js";
+import { jsonOnlyOutput, jsonTextOutput } from "./output/formats.js";
 import { resolveOutputFormat } from "./output/format-selection.js";
 
 class MemoryWriter {
@@ -141,6 +141,32 @@ test("advertises text only for completed renderers and keeps machine defaults JS
     commandName: "version",
     format: "json",
   });
+});
+
+test("selects the deepest registered command when a parent is also executable", () => {
+  const parent: CommandDefinition = {
+    ...futureCommand,
+    name: "group",
+    options: [],
+  };
+  const child: CommandDefinition = {
+    ...futureCommand,
+    name: "group.child",
+    options: [],
+    output: jsonTextOutput,
+    textRenderer: () => "child",
+  };
+
+  const selection = resolveOutputFormat(["group", "child", "--human"], [parent, child]);
+
+  expect(selection.definition?.name).toBe("group.child");
+  expect(selection.format).toBe("text");
+  expect(selection.error).toBeUndefined();
+
+  const parentSelection = resolveOutputFormat(["group"], [parent, child]);
+  expect(parentSelection.definition?.name).toBe("group");
+  expect(parentSelection.format).toBe("json");
+  expect(parentSelection.error).toBeUndefined();
 });
 
 test("does not interpret selector-like values after -- or in option values as format flags", () => {
@@ -506,8 +532,11 @@ test("derives parser options and describe metadata from registered commands", as
 
   const help = new MemoryWriter();
   expect(await run(["future", "--help"], { registry: definitions, stdout: help })).toBe(0);
-  expect(help.value).toContain("Usage: lore future");
-  expect(help.value).not.toContain('"ok"');
+  expect(JSON.parse(help.value)).toMatchObject({
+    command: "describe",
+    ok: true,
+    data: { name: "future" },
+  });
 });
 
 test("keeps parser and describe on the same immutable program snapshot", async () => {
@@ -524,8 +553,11 @@ test("keeps parser and describe on the same immutable program snapshot", async (
   definitions.pop();
   await program.parseAsync(["future", "--help"], { from: "user" });
 
-  expect(stdout.value).toContain("Usage: lore future");
-  expect(stdout.value).not.toContain('"ok"');
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "describe",
+    ok: true,
+    data: { name: "future" },
+  });
 });
 
 test("returns exit code 1 with a successful blocking domain result", async () => {

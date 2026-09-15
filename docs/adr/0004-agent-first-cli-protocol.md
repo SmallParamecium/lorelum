@@ -43,7 +43,7 @@ JSON v1 is compact, has no pretty-print mode, and contains no ANSI, spinner, pro
 ### Help and machine discovery
 
 - A bare `lore` invocation retains its existing root capability response; this ADR does not change its no-argument behavior.
-- Successful `-h` / `--help` and `lore help [command path]` invocations write plain text to stdout, exit `0`, and do not emit a business-result JSON envelope. Valid Help remains text even when `--human` or `--json` is present. Future `--format` or `--agent` support must not turn a successful Help invocation into business JSON. Help parsing, wording, hierarchy, and Help-specific errors are governed by issue #25.
+- The intended Help surface is a separate, fixed-text interaction: successful `-h` / `--help` and `lore help [command path]` invocations should write plain text to stdout and remain outside the business-result JSON envelope. Its parsing, wording, hierarchy, and Help-specific errors are governed by issue #25. This business-output rollout does not implement that surface; the current CLI retains its existing machine-readable `describe` response for valid `--help` invocations.
 - `lore describe [command]` is the explicit machine-readable command-discovery interface and returns the JSON envelope. Discovery exposes command IDs, arguments/options, output formats/defaults, result schema, visible error codes, and exit behavior.
 
 Malformed invocations are rejected before a static Help or version response can hide the error. Usage messages must not echo raw arguments. Help-specific error presentation follows issue #25; business-command format and error routing follow the sections below.
@@ -102,4 +102,4 @@ Command options model flags, values, defaults, and required presence separately.
 
 **Acceptance:** Maintainers accepted this ADR on 2026-09-14. Acceptance freezes the protocol and compatibility rules; individual command renderers may still roll out separately according to the matrix above.
 
-**Follow-ups:** add text renderers to other commands only when their projection and tests are complete; migrate machine callers before considering a `get` default change; and keep any Help-specific error behavior aligned with issue #25. The initial rollout for `get`, `list`, `install`, `query`, `--version`, and fixed-text Help is implemented and validated in the local worktree; this does not imply that the changes have been merged or released.
+**Follow-ups:** add text renderers to other commands only when their projection and tests are complete; migrate machine callers before considering a `get` default change; and keep any Help-specific error behavior aligned with issue #25. The initial business-result rollout for `get`, `list`, `install`, `query`, and `--version` is implemented and validated in the local worktree; Help parsing/rendering remains deferred to issue #25 and is not part of this rollout. This does not imply that the changes have been merged or released.

@@ -23,7 +23,6 @@ import {
   rootCommand,
   snapshotCommandDefinitions,
 } from "./registry.js";
-import { renderHelpText } from "./output/help-renderer.js";
 import { invalidInvocationError } from "./runtime/errors.js";
 import { Logger, logLevels, type LogLevel } from "./runtime/logger.js";
 
@@ -77,21 +76,6 @@ export function createProgram(
     program.addOption(toCommanderOption(option));
   }
 
-  const helpCommand = program.command("help [command...]").helpOption(false).helpCommand(false);
-  helpCommand.description("Show human-readable help for Lorelum commands.");
-  helpCommand.action((...arguments_: unknown[]) => {
-    const path = arguments_[0];
-    const pathSegments = Array.isArray(path)
-      ? path.filter((segment): segment is string => typeof segment === "string")
-      : typeof path === "string"
-        ? [path]
-        : [];
-    const command = arguments_.at(-1);
-    if (!(command instanceof Command))
-      throw new Error("Commander did not provide the Help context.");
-    renderHelpPath(output, pathSegments, command, describeFromRegistry);
-  });
-
   const commands = new Map<string, Command>();
   for (const definition of registry) {
     const command = commandForDefinition(program, commands, definition);
@@ -100,9 +84,6 @@ export function createProgram(
       const argument = new Argument(
         positional.required ? `<${positional.name}>` : `[${positional.name}]`,
       );
-      // Let command-level Help reach the action without a required value. The registry
-      // remains authoritative for usage text and required-argument validation below.
-      if (positional.required) argument.argOptional();
       const values = positionalValues(definition, positional, registry);
       if (values !== undefined) argument.choices([...values]);
       command.addArgument(argument);
@@ -120,7 +101,7 @@ export function createProgram(
         commandInstance,
         arguments_
           .slice(0, -1)
-          .map((argument) => (typeof argument === "string" ? argument : undefined)),
+          .filter((argument): argument is string => typeof argument === "string"),
         output,
         lifecycle,
         describeFromRegistry,
@@ -130,27 +111,13 @@ export function createProgram(
     });
   }
 
-  for (const [path, command] of commands) {
-    const isCommandGroup =
-      !registry.some((definition) => definition.name === path) &&
-      registry.some((definition) => definition.name.startsWith(`${path}.`));
-    if (!isCommandGroup) continue;
-    command.action(() => {
-      const helpOption = frameworkOption("help");
-      if (command.optsWithGlobals()[commandOptionKey(helpOption)] !== true) {
-        throw invalidInvocationError();
-      }
-      renderHelpPath(output, path.split("."), command, describeFromRegistry);
-    });
-  }
-
   return program;
 }
 
 async function executeCommand(
   definition: CommandDefinition,
   command: Command,
-  positionals: (string | undefined)[],
+  positionals: string[],
   output: OutputWriter,
   lifecycle: ProgramLifecycle,
   describeFromRegistry: DescribeCommand,
@@ -180,14 +147,12 @@ async function executeCommand(
     return;
   }
   if (helpOption !== undefined) {
-    const description = requireCommandDescription(describeFromRegistry, definition.name);
-    renderTextSuccess(output, renderHelpText(description));
+    renderSuccess(
+      output,
+      discoveryCommandName,
+      requireCommandDescription(describeFromRegistry, definition.name),
+    );
     return;
-  }
-  for (const [index, positional] of definition.positionals.entries()) {
-    if (positional.required && positionals[index] === undefined) {
-      throw invalidInvocationError();
-    }
   }
   for (const option of definition.options) {
     if (option.optionRequired && !hasParsedOption(command, option)) {
@@ -197,7 +162,7 @@ async function executeCommand(
 
   const result = await definition.handler({
     options: command.optsWithGlobals(),
-    positionals: positionals.filter((positional): positional is string => positional !== undefined),
+    positionals,
     describeCommand: describeFromRegistry,
   });
   const exitCode = result.exitCode ?? 0;
@@ -269,58 +234,6 @@ function commandForDefinition(
     parent = command;
   }
   return parent;
-}
-
-function renderHelpPath(
-  output: OutputWriter,
-  pathSegments: readonly string[],
-  command: Command,
-  describe: DescribeCommand,
-): void {
-  const versionOption = frameworkOption("version");
-  if (command.optsWithGlobals()[commandOptionKey(versionOption)] === true) {
-    throw invalidInvocationError();
-  }
-  const description = resolveHelpDescription(pathSegments, describe);
-  if (description === undefined) throw invalidInvocationError();
-  renderTextSuccess(output, renderHelpText(description));
-}
-
-function resolveHelpDescription(
-  pathSegments: readonly string[],
-  describe: DescribeCommand,
-): JsonValue | undefined {
-  if (pathSegments.length === 0) {
-    return requireCommandDescription(describe);
-  }
-  const path = pathSegments.join(".");
-  const direct = describe(path);
-  if (direct !== undefined) return direct;
-
-  const root = describe();
-  if (typeof root !== "object" || root === null || Array.isArray(root) || !("commands" in root)) {
-    return undefined;
-  }
-  const commands = root.commands;
-  if (!Array.isArray(commands)) return undefined;
-  const children = commands.filter(
-    (candidate) =>
-      typeof candidate === "object" &&
-      candidate !== null &&
-      !Array.isArray(candidate) &&
-      "name" in candidate &&
-      typeof candidate.name === "string" &&
-      candidate.name.startsWith(`${path}.`),
-  );
-  if (children.length === 0) return undefined;
-  return {
-    name: path,
-    summary: `Commands under ${path.replaceAll(".", " ")}`,
-    usage: path.replaceAll(".", " "),
-    positionals: [],
-    options: [],
-    commands: children,
-  };
 }
 
 function hasParsedOption(command: Command, option: CommandDefinition["options"][number]): boolean {

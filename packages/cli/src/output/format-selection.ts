@@ -21,7 +21,6 @@ export function resolveOutputFormat(
   definitions: readonly CommandDefinition[],
 ): OutputFormatSelection {
   const childDefinition = findCommandDefinition(arguments_, definitions);
-  const helpCommand = isHelpCommandInvocation(arguments_);
   const definition = childDefinition ?? (hasCommandWord(arguments_) ? undefined : rootCommand);
   const response = definition === rootCommand ? findRootResponse(arguments_) : undefined;
   const commandName = response?.command ?? definition?.name ?? "unknown";
@@ -37,10 +36,10 @@ export function resolveOutputFormat(
   }
 
   const explicitFormats = new Set(parsed.explicitFormats);
-  if (parsed.helpRequested || helpCommand) {
+  if (parsed.helpRequested) {
     if (explicitFormats.size > 1) {
       return {
-        commandName: helpCommand ? "help" : commandName,
+        commandName,
         format: "json",
         ...(definition === undefined ? {} : { definition }),
         ...(response === undefined ? {} : { response }),
@@ -48,7 +47,7 @@ export function resolveOutputFormat(
       };
     }
     return {
-      commandName: helpCommand ? "help" : commandName,
+      commandName,
       format: "json",
       ...(definition === undefined ? {} : { definition }),
       ...(response === undefined ? {} : { response }),
@@ -188,29 +187,6 @@ function parseFormatSelectors(
   return { explicitFormats, agent, helpRequested };
 }
 
-function isHelpCommandInvocation(arguments_: readonly string[]): boolean {
-  const valueFlags = new Set(
-    rootCommand.options
-      .filter((option) => option.value !== undefined)
-      .flatMap((option) => [
-        option.longFlag,
-        ...(option.shortFlag === undefined ? [] : [option.shortFlag]),
-      ]),
-  );
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index]!;
-    if (argument === "--") return false;
-    if (argument.startsWith("-")) {
-      const separator = argument.indexOf("=");
-      const flag = separator === -1 ? argument : argument.slice(0, separator);
-      if (valueFlags.has(flag) && separator === -1) index += 1;
-      continue;
-    }
-    return argument === "help";
-  }
-  return false;
-}
-
 function isOutputFormat(value: string): value is OutputFormat {
   return value === "json" || value === "text";
 }
@@ -220,6 +196,7 @@ function findCommandDefinition(
   definitions: readonly CommandDefinition[],
 ): CommandDefinition | undefined {
   const words: string[] = [];
+  let matched: CommandDefinition | undefined;
   const globalOptions = new Map(
     rootCommand.options.flatMap((option) =>
       [option.longFlag, ...(option.shortFlag === undefined ? [] : [option.shortFlag])].map(
@@ -242,11 +219,16 @@ function findCommandDefinition(
     words.push(argument);
     const prefix = words.join(".");
     const definition = definitions.find((candidate) => candidate.name === prefix);
-    if (definition !== undefined) return definition;
-    if (!definitions.some((candidate) => candidate.name.startsWith(`${prefix}.`))) return undefined;
+    const hasChildren = definitions.some((candidate) => candidate.name.startsWith(`${prefix}.`));
+    if (definition !== undefined) {
+      matched = definition;
+      if (!hasChildren) return definition;
+      continue;
+    }
+    if (!hasChildren) return matched;
   }
 
-  return undefined;
+  return matched;
 }
 
 function hasCommandWord(arguments_: readonly string[]): boolean {

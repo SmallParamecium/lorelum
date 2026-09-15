@@ -53,7 +53,8 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
   let visibleErrorCodes = rootCommand.errorCodes;
 
   try {
-    const formatSelection = resolveOutputFormat(arguments_, options.registry ?? commandRegistry);
+    const definitions = options.registry ?? commandRegistry;
+    const formatSelection = resolveOutputFormat(arguments_, definitions);
     if (
       formatSelection.definition !== rootCommand ||
       formatSelection.response !== undefined ||

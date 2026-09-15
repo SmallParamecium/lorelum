@@ -103,24 +103,6 @@ async function verifyCompiledEntrypoint(executable: string, directory: string): 
   assert.match(versionText.stdout, /^Lorelum \S+ \(protocol \d+\)\r?\n$/);
   assert.equal(versionText.stderr, "");
 
-  const helpText = await runProcess([executable, "query", "probe", "--human", "--help"]);
-  assert.equal(helpText.exitCode, 0);
-  assert(helpText.stdout.includes("Usage: lore query <text>"));
-  assert.equal(helpText.stdout.includes('"ok"'), false);
-  assert.equal(helpText.stderr, "");
-
-  const helpWithoutRequiredArgument = await runProcess([executable, "query", "--help"]);
-  assert.equal(helpWithoutRequiredArgument.exitCode, 0);
-  assert(helpWithoutRequiredArgument.stdout.includes("Usage: lore query <text>"));
-  assert.equal(helpWithoutRequiredArgument.stdout.includes('"ok"'), false);
-  assert.equal(helpWithoutRequiredArgument.stderr, "");
-
-  const helpCommand = await runProcess([executable, "help", "query", "--json"]);
-  assert.equal(helpCommand.exitCode, 0);
-  assert(helpCommand.stdout.includes("Usage: lore query <text>"));
-  assert.equal(helpCommand.stdout.includes('"ok"'), false);
-  assert.equal(helpCommand.stderr, "");
-
   const explicitJson = await runProcess([executable, "--json"]);
   assert.equal(explicitJson.exitCode, 0);
   assert.deepEqual(selectProtocolFields(explicitJson.stdout), {

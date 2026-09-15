@@ -133,14 +133,17 @@ function optionResultSchemaFor(command: string, behavior: string): JsonSchema {
   return schema;
 }
 
-test("returns plain-text help and structured version responses", async () => {
+test("returns structured help and version responses", async () => {
   const help = new MemoryWriter();
   const version = new MemoryWriter();
 
   expect(await run(["describe", "--help"], { stdout: help })).toBe(0);
-  expect(help.value).toContain("Usage: lore describe");
-  expect(help.value).toContain("Return machine-readable command capabilities.");
-  expect(help.value).not.toContain('"protocolVersion"');
+  expect(JSON.parse(help.value)).toMatchObject({
+    command: "describe",
+    ok: true,
+    data: { name: "describe" },
+  });
+  expect(validateProtocolSchema(JSON.parse(help.value), protocolResponseSchema)).toEqual([]);
 
   expect(await run(["--version"], { stdout: version })).toBe(0);
   const versionResponse = JSON.parse(version.value);
@@ -155,51 +158,6 @@ test("returns plain-text help and structured version responses", async () => {
   const versionResultSchema = optionResultSchemaFor("lore", "version");
   expect(validateJsonSchema(versionResponse.data, versionResultSchema)).toEqual([]);
   expect(validateJsonSchema({ protocolVersion: 1 }, versionResultSchema)).not.toEqual([]);
-
-  const textVersion = new MemoryWriter();
-  const textStderr = new MemoryWriter();
-  expect(
-    await run(["--version", "--format=text"], { stdout: textVersion, stderr: textStderr }),
-  ).toBe(0);
-  expect(textVersion.value).toBe(`Lorelum ${toolVersion} (protocol 1)\n`);
-  expect(textStderr.value).toBe("");
-});
-
-test("Help remains plain text regardless of format selectors", async () => {
-  const invocations = [
-    ["--help", "--human"],
-    ["--help", "--json"],
-    ["--format=json", "--help"],
-    ["describe", "--format=text", "--help"],
-    ["query", "probe", "--human", "--help"],
-    ["query", "probe", "--json", "--help"],
-    ["get", "--help"],
-    ["query", "--help"],
-    ["query", "-h"],
-    ["pack", "install", "--help"],
-    ["describe", "-h"],
-    ["pack", "--help"],
-    ["help", "query"],
-    ["help", "pack"],
-  ];
-  await Promise.all(
-    invocations.map(async (args) => {
-      const stdout = new MemoryWriter();
-      const stderr = new MemoryWriter();
-      expect(await run(args, { stdout, stderr })).toBe(0);
-      expect(stdout.value).toContain("Usage: lore");
-      expect(stdout.value).not.toContain('"ok"');
-      expect(stderr.value).toBe("");
-    }),
-  );
-  const queryHelp = new MemoryWriter();
-  expect(await run(["help", "query"], { stdout: queryHelp })).toBe(0);
-  expect(queryHelp.value).toContain("Usage: lore query <text>");
-  expect(queryHelp.value).toContain("--format <format>");
-  const packGroupHelp = new MemoryWriter();
-  expect(await run(["help", "pack"], { stdout: packGroupHelp })).toBe(0);
-  expect(packGroupHelp.value).toContain("Subcommands:");
-  expect(packGroupHelp.value).toContain("pack install <pack[@version]>");
 });
 
 test("accepts the documented equals form of global options", async () => {
@@ -207,81 +165,6 @@ test("accepts the documented equals form of global options", async () => {
 
   expect(await run(["--log-level=debug"], { stdout })).toBe(0);
   expect(JSON.parse(stdout.value)).toMatchObject({ command: "describe", ok: true });
-});
-
-test("accepts JSON and agent format selectors without changing JSON output", async () => {
-  await Promise.all(
-    [["--format=json"], ["--json"], ["--agent"], ["describe", "--agent"]].map(async (args) => {
-      const stdout = new MemoryWriter();
-      const stderr = new MemoryWriter();
-
-      expect(await run(args, { stderr, stdout })).toBe(0);
-      expect(JSON.parse(stdout.value)).toMatchObject({ ok: true });
-      expect(stderr.value).toBe("");
-    }),
-  );
-});
-
-test("rejects invalid, conflicting, and unsupported output format requests before handlers", async () => {
-  const cases = [
-    { args: ["get", "placeholder", "--format=csv"], command: "get", code: "usage.format-invalid" },
-    { args: ["get", "--format"], command: "get", code: "usage.format-invalid" },
-    {
-      args: ["get", "placeholder", "--json", "--human"],
-      command: "get",
-      code: "usage.format-conflict",
-    },
-    {
-      args: ["describe", "--format=text"],
-      command: "describe",
-      code: "usage.format-unsupported",
-    },
-    {
-      args: ["describe", "--agent", "--format=text"],
-      command: "describe",
-      code: "usage.format-unsupported",
-    },
-    {
-      args: ["query", "probe", "--human", "--json", "--help"],
-      command: "query",
-      code: "usage.format-conflict",
-    },
-    { args: ["--format=text"], command: "lore", code: "usage.format-unsupported" },
-  ] as const;
-
-  await Promise.all(
-    cases.map(async ({ args, command, code }) => {
-      const stdout = new MemoryWriter();
-      const stderr = new MemoryWriter();
-
-      expect(await run([...args], { stderr, stdout })).toBe(2);
-      expect(JSON.parse(stdout.value)).toMatchObject({
-        command,
-        ok: false,
-        error: { code },
-      });
-      expect(stdout.value.trimEnd().split("\n")).toHaveLength(1);
-      expect(stderr.value).toBe("");
-    }),
-  );
-});
-
-test("uses a text diagnostic only for an unknown command with explicit text preference", async () => {
-  const stdout = new MemoryWriter();
-  const stderr = new MemoryWriter();
-
-  expect(await run(["not-a-command", "--human"], { stderr, stdout })).toBe(2);
-  expect(stdout.value).toBe("");
-  expect(stderr.value).toBe("error[usage.invalid]: The command invocation is invalid.\n");
-});
-
-test("routes a recognized text-capable command's invocation failure to stderr", async () => {
-  const stdout = new MemoryWriter();
-  const stderr = new MemoryWriter();
-
-  expect(await run(["query", "--format=text"], { stdout, stderr })).toBe(2);
-  expect(stdout.value).toBe("");
-  expect(stderr.value).toBe("error[usage.invalid]: The command invocation is invalid.\n");
 });
 
 test("validates invalid calls before help and version responses", async () => {
@@ -310,5 +193,89 @@ test("validates invalid calls before help and version responses", async () => {
       expect(stderr.value).toBe("");
       expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
     }),
+  );
+});
+
+test("renders text for the static version response only when explicitly selected", async () => {
+  const stdout = new MemoryWriter();
+  const stderr = new MemoryWriter();
+
+  expect(await run(["--version", "--format=text"], { stdout, stderr })).toBe(0);
+  expect(stdout.value).toBe(`Lorelum ${toolVersion} (protocol 1)\n`);
+  expect(stderr.value).toBe("");
+});
+
+test("accepts JSON and agent format selectors without changing JSON output", async () => {
+  await Promise.all(
+    [["--format=json"], ["--json"], ["--agent"], ["describe", "--agent"]].map(async (args) => {
+      const stdout = new MemoryWriter();
+      const stderr = new MemoryWriter();
+
+      expect(await run(args, { stderr, stdout })).toBe(0);
+      expect(JSON.parse(stdout.value)).toMatchObject({ ok: true });
+      expect(stderr.value).toBe("");
+    }),
+  );
+});
+
+test("rejects invalid, conflicting, and unsupported output format requests before handlers", async () => {
+  const cases = [
+    { args: ["get", "placeholder", "--format=csv"], command: "get", code: "usage.format-invalid" },
+    { args: ["get", "--format"], command: "get", code: "usage.format-invalid" },
+    {
+      args: ["get", "placeholder", "--json", "--human"],
+      command: "get",
+      code: "usage.format-conflict",
+    },
+    {
+      args: ["query", "probe", "--human", "--json"],
+      command: "query",
+      code: "usage.format-conflict",
+    },
+    {
+      args: ["describe", "--format=text"],
+      command: "describe",
+      code: "usage.format-unsupported",
+    },
+    { args: ["--format=text"], command: "lore", code: "usage.format-unsupported" },
+  ] as const;
+
+  await Promise.all(
+    cases.map(async ({ args, command, code }) => {
+      const stdout = new MemoryWriter();
+      const stderr = new MemoryWriter();
+
+      expect(await run([...args], { stderr, stdout })).toBe(2);
+      expect(JSON.parse(stdout.value)).toMatchObject({
+        command,
+        ok: false,
+        error: { code },
+      });
+      expect(stdout.value.trimEnd().split("\n")).toHaveLength(1);
+      expect(stderr.value).toBe("");
+    }),
+  );
+});
+
+test("routes text-mode invocation failures to stderr without writing stdout", async () => {
+  const unknownStdout = new MemoryWriter();
+  const unknownStderr = new MemoryWriter();
+  expect(
+    await run(["not-a-command", "--human"], { stderr: unknownStderr, stdout: unknownStdout }),
+  ).toBe(2);
+  expect(unknownStdout.value).toBe("");
+  expect(unknownStderr.value).toBe("error[usage.invalid]: The command invocation is invalid.\n");
+
+  const missingArgumentStdout = new MemoryWriter();
+  const missingArgumentStderr = new MemoryWriter();
+  expect(
+    await run(["query", "--format=text"], {
+      stderr: missingArgumentStderr,
+      stdout: missingArgumentStdout,
+    }),
+  ).toBe(2);
+  expect(missingArgumentStdout.value).toBe("");
+  expect(missingArgumentStderr.value).toBe(
+    "error[usage.invalid]: The command invocation is invalid.\n",
   );
 });
