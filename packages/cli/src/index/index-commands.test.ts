@@ -138,7 +138,7 @@ test("index build forwards the selected Store root to the runtime client", async
   const operationId = "0f8fad5b-d9cb-469f-a165-70867728950e";
   const result = await invoke(["--store-root", "/isolated", "index", "build"], {
     runtime: runtime(async (rootPath) => {
-      expect(rootPath).toBe("/isolated");
+      expect(rootPath).toBe(resolve("/isolated"));
       return {
         operationId,
         state: "ready",

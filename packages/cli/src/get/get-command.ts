@@ -6,6 +6,8 @@ import {
 } from "@lorelum/engine";
 import { ID_REGEX } from "@lorelum/format";
 
+import { jsonTextOutput } from "../output/formats.js";
+import { renderGetText } from "../output/text-renderers.js";
 import type { CommandDefinition } from "../registry.js";
 import {
   CliError,
@@ -27,6 +29,9 @@ export function createGetCommand(services: GetCommandServices): CommandDefinitio
     summary: "Read one installed Practice by its exact ID from the selected local Store.",
     positionals: [{ name: "practice-id", required: true }],
     options: [],
+    output: jsonTextOutput,
+    textRenderer: renderGetText,
+    textOutputMode: "verbatim",
     resultSchema: getResultSchema,
     errorCodes: [
       ...frameworkErrorCodes,

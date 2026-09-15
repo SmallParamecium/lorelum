@@ -121,7 +121,14 @@ test("rejects localized runtime frontmatter and keeps format error allowlists na
     expect(response.error.code).toBe("localization.invalid");
     expect(
       (describeCommand("format", registry) as { errorCodes: readonly string[] }).errorCodes,
-    ).toEqual(["usage.invalid", "runtime.unexpected", "localization.invalid"]);
+    ).toEqual([
+      "usage.invalid",
+      "usage.format-invalid",
+      "usage.format-conflict",
+      "usage.format-unsupported",
+      "runtime.unexpected",
+      "localization.invalid",
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

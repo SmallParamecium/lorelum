@@ -6,12 +6,13 @@
 lore pack list
 lore pack list agentic-coding
 lore get agentic-coding.testing.classify-failure-before-changing-test
+lore get agentic-coding.testing.classify-failure-before-changing-test --format=text
+lore get agentic-coding.testing.classify-failure-before-changing-test --human
 lore --store-root /path/to/isolated-store get agentic-coding.testing.classify-failure-before-changing-test
 lore describe get
 ```
 
-For discovery, use `lore pack list` first, then `lore pack list <name>` and pass
-one returned Practice ID to `lore get`.
+For discovery, use `lore pack list` first, then `lore pack list <name>` and pass one returned Practice ID to `lore get`.
 
 The ID must follow the existing dotted Practice ID format. Lookup is exact: there is no title matching, prefix completion, or case normalization. The global `--store-root` option also works after the command; relative paths resolve from the calling process's working directory. Omitting it selects the user Store.
 
@@ -34,6 +35,24 @@ data: {
 
 `contentDigest` is the SHA-256 digest of the canonical content, not a publisher signature. Identical content provided under the same ID by multiple active Packs returns one Practice with all sources, ordered by Pack name and source path. Each `sourcePath` is relative to its Pack root. Internal canonical serialization, duplicate source content, and machine-local absolute paths are not returned.
 
+## Output format
+
+JSON remains the default and retains the complete structured result shown above. To read or redirect only the Markdown body, explicitly request text:
+
+```sh
+lore get <practice-id> --format=text
+# Alias:
+lore get <practice-id> --human
+```
+
+Text mode writes the canonical `practice.body` to stdout without a JSON envelope, title, ID, source metadata, or an automatically added final newline. The body is preserved exactly as returned by the LocalStore (whose canonicalization normalizes line endings to LF). This makes redirection suitable for saving the body without changing its ending:
+
+```sh
+lore get <practice-id> --format=text > practice.md
+```
+
+Without an explicit format, `get` still outputs JSON. `--agent` also prefers JSON unless an explicit format selector is supplied.
+
 ## Store behavior
 
 Each invocation calls the Engine's `LocalStore.getEffectivePractice()` once for the selected root. The storage layer performs a parameterized SQLite primary-key lookup joined with all source rows, then runs the same canonical, digest, path, and row validation used by full snapshot reads. The read is accepted only when manifest A, the SQLite `(generation, effectiveRevision)` tuple, and manifest B describe the same committed state. Existing operation-journal convergence and Store initialization/recovery behavior remain in force.
@@ -44,7 +63,7 @@ Separate invocations can observe different Store revisions; there is no cross-co
 
 ## Errors and exit codes
 
-Success exits `0`. Failures use `ok: false` with `error: { code, message }` and exit `2`. Both success and failure write exactly one JSON line to stdout.
+Success exits `0`. Failures exit `2`. In the default/JSON format, success and failure write exactly one JSON line to stdout. After text is successfully selected, successful output is the body on stdout and ordinary get failures are concise diagnostics on stderr. Invalid or conflicting format-selection requests fail before text mode is established and use the framework's JSON fallback.
 
 | Code | Meaning |
 | --- | --- |
