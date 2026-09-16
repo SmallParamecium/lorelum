@@ -211,11 +211,11 @@ function renderResponse(
   format: OutputFormat,
   missingTextRendererMessage: string,
 ): void {
-  assertJsonValue(response.data);
   if (format === "json") {
     renderSuccess(output, response.command, response.data);
     return;
   }
+  assertJsonValue(response.data);
   if (response.textRenderer === undefined) {
     throw new Error(missingTextRendererMessage);
   }
