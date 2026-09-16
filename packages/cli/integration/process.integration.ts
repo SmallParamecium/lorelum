@@ -34,10 +34,18 @@ async function main(): Promise<void> {
 }
 
 async function verifySourceEntrypoint(bunExecutable: string, directory: string): Promise<void> {
-  const source = await runProcess([bunExecutable, entrypoint, "--version"]);
+  const source = await runProcess([bunExecutable, entrypoint, "--version", "--json"]);
   assert.equal(source.exitCode, 0);
   assert.deepEqual(selectProtocolFields(source.stdout), { command: "version", ok: true });
   assert.equal(source.stderr, "");
+
+  const explicitJson = await runProcess([bunExecutable, entrypoint, "--json"]);
+  assert.equal(explicitJson.exitCode, 0);
+  assert.deepEqual(selectProtocolFields(explicitJson.stdout), {
+    command: "describe",
+    ok: true,
+  });
+  assert.equal(explicitJson.stderr, "");
 
   const hook = await runProcess(
     [
@@ -87,10 +95,23 @@ async function compileCli(bunExecutable: string, executable: string): Promise<vo
 }
 
 async function verifyCompiledEntrypoint(executable: string, directory: string): Promise<void> {
-  const binary = await runProcess([executable, "--version"]);
+  const binary = await runProcess([executable, "--version", "--json"]);
   assert.equal(binary.exitCode, 0);
   assert.deepEqual(selectProtocolFields(binary.stdout), { command: "version", ok: true });
   assert.equal(binary.stderr, "");
+
+  const versionText = await runProcess([executable, "--version"]);
+  assert.equal(versionText.exitCode, 0);
+  assert.match(versionText.stdout, /^Lorelum \S+ \(protocol \d+\)\r?\n$/);
+  assert.equal(versionText.stderr, "");
+
+  const explicitJson = await runProcess([executable, "--json"]);
+  assert.equal(explicitJson.exitCode, 0);
+  assert.deepEqual(selectProtocolFields(explicitJson.stdout), {
+    command: "describe",
+    ok: true,
+  });
+  assert.equal(explicitJson.stderr, "");
 
   const discovery = await runProcess([executable]);
   assert.equal(discovery.exitCode, 0);

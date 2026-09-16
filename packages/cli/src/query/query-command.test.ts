@@ -20,6 +20,7 @@ import { protocolResponseSchema } from "../output/protocol.js";
 import { describeCommand, snapshotCommandDefinitions } from "../registry.js";
 import { CliError } from "../runtime/errors.js";
 import { createQueryCommand, type QueryCommandServices } from "./query-command.js";
+import type { SemanticRuntimeClient } from "./runtime-client.js";
 
 const queryResult: QueryResult = {
   mode: "keyword",
@@ -66,7 +67,7 @@ async function invoke(
     createClient,
     storageRoot: { rootPath: "unused-default" },
   });
-  const exitCode = await run([...args], {
+  const exitCode = await run([...args, "--json"], {
     registry: snapshotCommandDefinitions([definition]),
     stdout,
     stderr,
@@ -77,6 +78,44 @@ async function invoke(
   const response = JSON.parse(stdout.value);
   expect(validateProtocolSchema(response, protocolResponseSchema)).toEqual([]);
   return { exitCode, response, definition };
+}
+
+async function invokeText(
+  args: readonly string[],
+  queryService: QueryCommandServices["queryService"],
+  createClient: QueryCommandServices["createClient"] = async () =>
+    ({
+      query: async () => ({
+        mode: "semantic",
+        profileId: "p".repeat(64),
+        coverage: "complete",
+        results: [],
+      }),
+    }) as Pick<BackendClient, "query">,
+) {
+  const stdout = {
+    value: "",
+    write(message: string) {
+      this.value += message;
+    },
+  };
+  const stderr = {
+    value: "",
+    write(message: string) {
+      this.value += message;
+    },
+  };
+  const definition = createQueryCommand({
+    queryService,
+    createClient,
+    storageRoot: { rootPath: "unused-default" },
+  });
+  const exitCode = await run([...args], {
+    registry: snapshotCommandDefinitions([definition]),
+    stdout,
+    stderr,
+  });
+  return { exitCode, stdout: stdout.value, stderr: stderr.value };
 }
 
 test("passes the exact text, parsed top-k, and selected Store root to keyword QueryService", async () => {
@@ -275,6 +314,80 @@ test("maps undeclared query failures without exposing details", async () => {
   expect(result.exitCode).toBe(2);
   expect(result.response.error.code).toBe("runtime.unexpected");
   expect(JSON.stringify(result.response)).not.toContain("internal-path");
+});
+
+test("renders explicit keyword and semantic query requests as text without changing ranking", async () => {
+  const keyword = await invokeText(["query", "auth", "--mode", "keyword"], {
+    async query() {
+      return queryResult;
+    },
+  });
+  expect(keyword.exitCode).toBe(0);
+  expect(keyword.stdout).toContain("Query mode: keyword");
+  expect(keyword.stdout).toContain("sample.react-auth — Use the existing authentication service");
+  expect(keyword.stdout).toContain("Applies when: adding authentication to a React page");
+  expect(keyword.stdout).not.toContain('"ok"');
+  expect(keyword.stderr).toBe("");
+
+  const semantic = await invokeText(
+    ["query", "auth"],
+    {
+      async query() {
+        return queryResult;
+      },
+    },
+    async () =>
+      ({
+        query: async () => ({
+          mode: "semantic",
+          profileId: "p".repeat(64),
+          coverage: "partial",
+          results: queryResult.results.map((hit) => ({
+            ...hit,
+            techStack: [...hit.techStack],
+          })),
+        }),
+      }) as Pick<BackendClient, "query">,
+  );
+  expect(semantic.exitCode).toBe(0);
+  expect(semantic.stdout).toContain("Query mode: semantic (coverage: partial)");
+  expect(semantic.stdout).toContain("sample.react-auth");
+  expect(semantic.stdout).not.toContain("profileId");
+  expect(semantic.stderr).toBe("");
+});
+
+test("renders empty and preparing semantic query text while preserving exit code 1", async () => {
+  const empty = await invokeText(["query", "auth", "--mode", "keyword"], {
+    async query() {
+      return { mode: "keyword", results: [] };
+    },
+  });
+  expect(empty.exitCode).toBe(0);
+  expect(empty.stdout).toContain("No matching Practices.");
+
+  const preparingClient = {
+    async query() {
+      return {
+        state: "preparing" as const,
+        preparationId: "1f8fad5b-d9cb-469f-a165-70867728950e",
+        message: "The local model is preparing in the background.",
+      };
+    },
+  } satisfies SemanticRuntimeClient;
+  const preparing = await invokeText(
+    ["query", "auth"],
+    {
+      async query() {
+        return queryResult;
+      },
+    },
+    async () => preparingClient,
+  );
+  expect(preparing.exitCode).toBe(1);
+  expect(preparing.stdout).toContain("preparing");
+  expect(preparing.stdout).toContain("The local model is preparing in the background.");
+  expect(preparing.stdout).not.toContain("1f8fad5b-d9cb-469f-a165-70867728950e");
+  expect(preparing.stderr).toBe("");
 });
 
 test("publishes query arguments, schema, error allowlist, and exit codes through discovery", () => {

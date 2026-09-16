@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createLocalStore, decodePackDirectory } from "@lorelum/engine";
+
 import { RegistrySchema, type RegistryRelease } from "@lorelum/format";
 import type { IndexOperation } from "@lorelum/backend/protocol";
 
@@ -145,10 +146,13 @@ test("installs from an explicit Registry repository and is idempotent", async ()
     const firstOutput = new MemoryWriter();
 
     expect(
-      await run(["pack", "install", "agentic-coding@0.1.0", "--registry", "acme/team-packs"], {
-        registry: definitions,
-        stdout: firstOutput,
-      }),
+      await run(
+        ["--json", "pack", "install", "agentic-coding@0.1.0", "--registry", "acme/team-packs"],
+        {
+          registry: definitions,
+          stdout: firstOutput,
+        },
+      ),
     ).toBe(0);
     const first = JSON.parse(firstOutput.value);
     expect(first).toMatchObject({
@@ -173,7 +177,7 @@ test("installs from an explicit Registry repository and is idempotent", async ()
 
     const secondOutput = new MemoryWriter();
     expect(
-      await run(["pack", "install", "agentic-coding", "--registry", "acme/team-packs"], {
+      await run(["--json", "pack", "install", "agentic-coding", "--registry", "acme/team-packs"], {
         registry: definitions,
         stdout: secondOutput,
       }),
@@ -196,6 +200,48 @@ test("installs from an explicit Registry repository and is idempotent", async ()
   }
 });
 
+test("install defaults to text and preserves mutation and index status", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "lorelum-install-text-"));
+  try {
+    const storageRoot = join(directory, "store");
+    const fixture = createServices(await createPack(directory), storageRoot);
+    const definitions = snapshotCommandDefinitions([createInstallCommand(fixture.services)]);
+    const stdout = new MemoryWriter();
+    const stderr = new MemoryWriter();
+
+    expect(
+      await run(["pack", "install", "agentic-coding@0.1.0", "--registry", "acme/team-packs"], {
+        registry: definitions,
+        stdout,
+        stderr,
+      }),
+    ).toBe(0);
+    expect(stdout.value).toContain("Installed agentic-coding@0.1.0.");
+    expect(stdout.value).toContain("Store snapshot: generation 1, effective revision 1");
+    expect(stdout.value).toContain("Added: agentic-coding.installation.placeholder");
+    expect(stdout.value).toContain("Semantic index: ready (1 vectors).");
+    expect(stdout.value).not.toContain('"ok"');
+    expect(stderr.value).toBe("");
+
+    const idempotentStdout = new MemoryWriter();
+    const idempotentStderr = new MemoryWriter();
+    expect(
+      await run(["pack", "install", "agentic-coding@0.1.0", "--registry", "acme/team-packs"], {
+        registry: definitions,
+        stdout: idempotentStdout,
+        stderr: idempotentStderr,
+      }),
+    ).toBe(0);
+    expect(idempotentStdout.value).toContain("Already installed agentic-coding@0.1.0.");
+    expect(idempotentStdout.value).toContain("Practice changes: none.");
+    expect(idempotentStdout.value).toContain("Semantic index: ready (1 vectors).");
+    expect(idempotentStdout.value).not.toContain('"ok"');
+    expect(idempotentStderr.value).toBe("");
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("uses an explicit global Store root without touching the default Store", async () => {
   const directory = await mkdtemp(join(tmpdir(), "lorelum-install-command-"));
   try {
@@ -206,7 +252,7 @@ test("uses an explicit global Store root without touching the default Store", as
     const firstOutput = new MemoryWriter();
 
     expect(
-      await run(["--store-root", isolatedRoot, "pack", "install", "agentic-coding"], {
+      await run(["--json", "--store-root", isolatedRoot, "pack", "install", "agentic-coding"], {
         registry: definitions,
         stdout: firstOutput,
       }),
@@ -217,7 +263,7 @@ test("uses an explicit global Store root without touching the default Store", as
 
     const secondOutput = new MemoryWriter();
     expect(
-      await run(["pack", "install", "agentic-coding", "--store-root", isolatedRoot], {
+      await run(["--json", "pack", "install", "agentic-coding", "--store-root", isolatedRoot], {
         registry: definitions,
         stdout: secondOutput,
       }),
@@ -238,7 +284,7 @@ test("a changed installed Pack requires an explicit update", async () => {
     const first = createServices(packDirectory, storageRoot);
     const firstDefinitions = snapshotCommandDefinitions([createInstallCommand(first.services)]);
     expect(
-      await run(["pack", "install", "agentic-coding"], {
+      await run(["--json", "pack", "install", "agentic-coding"], {
         registry: firstDefinitions,
         stdout: new MemoryWriter(),
       }),
@@ -261,7 +307,7 @@ Changed content that must not be installed implicitly.
     const definitions = snapshotCommandDefinitions([createInstallCommand(changed.services)]);
     const stdout = new MemoryWriter();
     expect(
-      await run(["pack", "install", "agentic-coding"], { registry: definitions, stdout }),
+      await run(["--json", "pack", "install", "agentic-coding"], { registry: definitions, stdout }),
     ).toBe(2);
     expect(JSON.parse(stdout.value)).toMatchObject({
       ok: false,
@@ -284,7 +330,7 @@ test("updates an installed Pack from the selected Registry release", async () =>
     const storageRoot = join(directory, "store");
     const installed = createServices(packDirectory, storageRoot);
     expect(
-      await run(["pack", "install", "agentic-coding"], {
+      await run(["--json", "pack", "install", "agentic-coding"], {
         registry: snapshotCommandDefinitions([createInstallCommand(installed.services)]),
         stdout: new MemoryWriter(),
       }),
@@ -369,7 +415,7 @@ test("rejects a release whose Pack identity does not match the Registry", async 
     const definitions = snapshotCommandDefinitions([createInstallCommand(fixture.services)]);
     const stdout = new MemoryWriter();
     expect(
-      await run(["pack", "install", "agentic-coding"], { registry: definitions, stdout }),
+      await run(["--json", "pack", "install", "agentic-coding"], { registry: definitions, stdout }),
     ).toBe(2);
     expect(JSON.parse(stdout.value)).toMatchObject({
       ok: false,
@@ -393,7 +439,7 @@ test("reports a failed index sync without rolling back the committed Pack", asyn
     const definitions = snapshotCommandDefinitions([createInstallCommand(fixture.services)]);
     const stdout = new MemoryWriter();
     expect(
-      await run(["pack", "install", "agentic-coding"], { registry: definitions, stdout }),
+      await run(["--json", "pack", "install", "agentic-coding"], { registry: definitions, stdout }),
     ).toBe(0);
     expect(JSON.parse(stdout.value)).toMatchObject({
       ok: true,
@@ -438,7 +484,7 @@ test.each([
     const definitions = snapshotCommandDefinitions([createInstallCommand(fixture.services)]);
     const stdout = new MemoryWriter();
     expect(
-      await run(["pack", "install", "agentic-coding"], { registry: definitions, stdout }),
+      await run(["--json", "pack", "install", "agentic-coding"], { registry: definitions, stdout }),
     ).toBe(0);
     expect(JSON.parse(stdout.value)).toMatchObject({
       ok: true,

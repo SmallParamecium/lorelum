@@ -104,6 +104,13 @@ function failingService(error: unknown): ListService {
   return service({ list: fail, listPackDetails: fail, listPack: fail });
 }
 
+async function runJson(
+  args: readonly string[],
+  options: Parameters<typeof run>[1],
+): Promise<number> {
+  return run(["--json", ...args], options);
+}
+
 test("describes the LocalStore-backed Pack catalog command contract", () => {
   expect(describeCommand("pack.list")).toMatchObject({
     name: "pack.list",
@@ -111,10 +118,12 @@ test("describes the LocalStore-backed Pack catalog command contract", () => {
     positionals: [{ name: "pack", required: false }],
     options: [
       { name: "-h, --help", required: false },
+      { name: "--json", required: false },
       { name: "--log-level <level>", required: false },
       { name: "--store-root <path>", required: false },
       { name: "--details", required: false },
     ],
+    output: { formats: ["json", "text"], default: "text" },
     errorCodes: [
       "usage.invalid",
       "runtime.unexpected",
@@ -132,21 +141,40 @@ test("returns all list modes through their result schema", async () => {
     createListCommand({ list: service(), storageRoot: defaultStorageRoot() }),
   ]);
 
-  expect(await run(["pack", "list"], { registry: definitions, stdout })).toBe(0);
+  expect(await runJson(["pack", "list"], { registry: definitions, stdout })).toBe(0);
   let response = JSON.parse(stdout.value);
   expect(response).toMatchObject({ command: "pack.list", ok: true, data: packsResult });
   let description = describeCommand("pack.list") as { resultSchema: JsonSchema };
   expect(validateJsonSchema(response.data, description.resultSchema)).toEqual([]);
 
+  const textOutput = new MemoryWriter();
+  expect(await run(["pack", "list"], { registry: definitions, stdout: textOutput })).toBe(0);
+  expect(textOutput.value).toContain("Store snapshot: generation 1, effective revision 2");
+  expect(textOutput.value).toContain("agentic-coding@0.3.0 (31 Practices)");
+  expect(textOutput.value).not.toContain('"ok"');
+
+  const catalogText = new MemoryWriter();
+  expect(
+    await run(["pack", "list", "agentic-coding"], {
+      registry: definitions,
+      stdout: catalogText,
+    }),
+  ).toBe(0);
+  expect(catalogText.value).toContain("agentic-coding@0.3.0");
+  expect(catalogText.value).toContain("agentic-coding.testing");
+  expect(catalogText.value).not.toContain('"ok"');
+
   stdout.value = "";
-  expect(await run(["pack", "list", "agentic-coding"], { registry: definitions, stdout })).toBe(0);
+  expect(await runJson(["pack", "list", "agentic-coding"], { registry: definitions, stdout })).toBe(
+    0,
+  );
   response = JSON.parse(stdout.value);
   expect(response).toMatchObject({ command: "pack.list", ok: true, data: packResult });
   description = describeCommand("pack.list") as { resultSchema: JsonSchema };
   expect(validateJsonSchema(response.data, description.resultSchema)).toEqual([]);
 
   stdout.value = "";
-  expect(await run(["pack", "list", "--details"], { registry: definitions, stdout })).toBe(0);
+  expect(await runJson(["pack", "list", "--details"], { registry: definitions, stdout })).toBe(0);
   response = JSON.parse(stdout.value);
   expect(response).toMatchObject({
     command: "pack.list",
@@ -211,7 +239,7 @@ test("rejects conflicting or extra Pack catalog arguments before service dispatc
   ]);
 
   const invocations = [
-    { args: ["pack", "list", "agentic-coding", "extra"], command: "unknown" },
+    { args: ["pack", "list", "agentic-coding", "extra"], command: "pack.list" },
     { args: ["pack", "list", "agentic-coding", "--details"], command: "pack.list" },
   ];
   const results = await Promise.all(
@@ -219,7 +247,7 @@ test("rejects conflicting or extra Pack catalog arguments before service dispatc
       const stdout = new MemoryWriter();
       return {
         command,
-        exitCode: await run(args, { registry: definitions, stdout }),
+        exitCode: await runJson(args, { registry: definitions, stdout }),
         response: JSON.parse(stdout.value),
       };
     }),
@@ -256,7 +284,7 @@ test("rejects malformed Pack names before service dispatch", async () => {
   const results = await Promise.all(
     ["", "   ", "Agentic", "agentic_coding", "agentic--coding"].map(async (packName) => {
       const stdout = new MemoryWriter();
-      const exitCode = await run(["pack", "list", packName], { registry: definitions, stdout });
+      const exitCode = await runJson(["pack", "list", packName], { registry: definitions, stdout });
       return { exitCode, response: JSON.parse(stdout.value) };
     }),
   );
@@ -290,9 +318,9 @@ test("rejects an empty --store-root value before service dispatch", async () => 
   ]);
 
   const stdout = new MemoryWriter();
-  expect(await run(["pack", "list", "--store-root", ""], { registry: definitions, stdout })).toBe(
-    2,
-  );
+  expect(
+    await runJson(["pack", "list", "--store-root", ""], { registry: definitions, stdout }),
+  ).toBe(2);
   expect(JSON.parse(stdout.value)).toMatchObject({
     command: "pack.list",
     ok: false,
@@ -314,9 +342,9 @@ test("maps an unknown Pack without echoing the supplied name", async () => {
     }),
   ]);
 
-  expect(await run(["pack", "list", "private-pack-name"], { registry: definitions, stdout })).toBe(
-    2,
-  );
+  expect(
+    await runJson(["pack", "list", "private-pack-name"], { registry: definitions, stdout }),
+  ).toBe(2);
   expect(JSON.parse(stdout.value)).toMatchObject({
     command: "pack.list",
     ok: false,
@@ -337,7 +365,7 @@ async function expectListFailure(
   const definitions = snapshotCommandDefinitions([
     createListCommand({ list, storageRoot: defaultStorageRoot() }),
   ]);
-  expect(await run([...args], { registry: definitions, stdout })).toBe(2);
+  expect(await runJson([...args], { registry: definitions, stdout })).toBe(2);
   expect(JSON.parse(stdout.value)).toMatchObject({ command: "pack.list", ok: false, error });
 }
 
@@ -372,7 +400,7 @@ test("normalizes undeclared list failures without exposing their details", async
     }),
   ]);
 
-  expect(await run(["pack", "list", "--details"], { registry: definitions, stdout })).toBe(2);
+  expect(await runJson(["pack", "list", "--details"], { registry: definitions, stdout })).toBe(2);
   expect(JSON.parse(stdout.value)).toMatchObject({
     command: "pack.list",
     ok: false,
@@ -423,7 +451,7 @@ test("resolves --store-root and forwards the selected Store to every list mode",
       ["pack", "list", "agentic-coding", "--store-root", "isolated-store"],
     ].map(async (args) => {
       const stdout = new MemoryWriter();
-      expect(await run(args, { registry: definitions, stdout })).toBe(0);
+      expect(await runJson(args, { registry: definitions, stdout })).toBe(0);
     }),
   );
 

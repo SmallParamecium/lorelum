@@ -1,6 +1,6 @@
 # CLI 文档
 
-Lorelum CLI 的普通机器接口是单行 JSON envelope。成功输出包含 `command`、`ok: true` 和 `data`；失败输出包含 `command`、`ok: false` 和 `error: { code, message }`。stdout 只输出这一行；诊断和模型下载进度写 stderr。`lore hook codex` 是唯一的集成 ABI 例外：它输出 Codex Hook envelope，而不是 Lorelum CLI envelope。
+Lorelum CLI 的 `--json` 机器接口是单行 JSON envelope。成功输出包含 `command`、`ok: true` 和 `data`；失败输出包含 `command`、`ok: false` 和 `error: { code, message }`。使用 `--json` 时 stdout 只输出这一行；默认文本命令将成功内容写 stdout、普通失败诊断写 stderr。`lore hook codex` 是唯一的集成 ABI 例外：它输出 Codex Hook envelope，而不是 Lorelum CLI envelope。
 
 普通命令正常成功退出码为 `0`，可见命令错误为 `2`。调用方应按稳定的 `error.code` 处理结果，不解析 message。`lore describe` 返回当前 protocol 命令和每个 `resultSchema`，可用于动态发现未来新增的普通命令；Codex Hook ABI 使用其专门文档定义的输出。
 
@@ -16,6 +16,12 @@ Lorelum CLI 的普通机器接口是单行 JSON envelope。成功输出包含 `c
 - [Codex Hook](hook.md)：向 Codex 注入受限的 Installed Pack Catalog。
 
 使用 `lore --version` 查询 CLI 版本；`--help` 和 `--log-level` 是全局选项。需要 Store 的命令支持 `--store-root <path>`；backend/model 命令不读取或修改 LocalStore，传入该选项不会改变它们的模型来源。
+
+## Output formats
+
+JSON is always available through `--json`. Commands with a completed text renderer use text by default; JSON-only commands remain JSON-only. Output selection does not depend on whether stdout is a terminal or a pipe. Help parsing and rendering are intentionally outside this rollout and remain deferred to a separate follow-up task. In the current CLI, `-h` / `--help` keeps the existing machine-readable `describe` response; this PR does not add a `lore help` command or fixed-text Help surface. Use `lore describe` for explicit machine-readable capabilities.
+
+In this rollout, text-by-default output is available for `get`, `pack list`, `pack install`, `query`, and `--version`. Other commands remain JSON-only. Pass `--json` to any adapted command when a machine-readable envelope is required. Each command documents what its text view contains; for example, `get` writes only the complete Practice body, while `query` writes ordered Practice summaries. After text output has been selected successfully, ordinary command failures go to stderr.
 
 ## Protocol versions
 

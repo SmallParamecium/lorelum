@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { InstalledPacksFixture } from "../fixtures/installed-packs.js";
 import { runList } from "../support/commands.js";
 import {
+  isRecord,
   parseSingleResponse,
   requireFailureCode,
   requireSuccessData,
@@ -15,18 +16,37 @@ export async function verifyListPacksScenario(
   fixture: InstalledPacksFixture,
   workingDirectory: string,
 ): Promise<void> {
+  const withoutPackRoot = (value: unknown): Record<string, unknown> => {
+    assert(isRecord(value));
+    assert.equal(typeof value.packRoot, "string");
+    assert(value.packRoot.startsWith(join(fixture.storageRoot, "packs")));
+    const { packRoot: _packRoot, ...pack } = value;
+    return pack;
+  };
+
   const listed = await runList(compiledBinary, fixture.storageRoot);
   assert.equal(listed.exitCode, 0);
   assert.equal(listed.stderr, "");
-  assert.deepEqual(requireSuccessData(parseSingleResponse(listed.stdout), "pack.list").packs, [
+  const listedData = requireSuccessData(parseSingleResponse(listed.stdout), "pack.list");
+  assert(Array.isArray(listedData.packs));
+  assert.deepEqual(listedData.packs.map(withoutPackRoot), [
     { name: "integration-pack", version: "1.0.0", practiceCount: 2 },
     { name: "minimal-pack", version: "1.0.0", practiceCount: 1 },
   ]);
 
+  const listedText = await runList(compiledBinary, fixture.storageRoot, { format: "text" });
+  assert.equal(listedText.exitCode, 0);
+  assert.equal(listedText.stderr, "");
+  assert(listedText.stdout.includes("Store snapshot: generation"));
+  assert(listedText.stdout.includes("integration-pack@1.0.0 (2 Practices)"));
+  assert.equal(listedText.stdout.includes('"ok"'), false);
+
   const details = await runList(compiledBinary, fixture.storageRoot, { details: true });
   assert.equal(details.exitCode, 0);
   assert.equal(details.stderr, "");
-  assert.deepEqual(requireSuccessData(parseSingleResponse(details.stdout), "pack.list").packs, [
+  const detailsData = requireSuccessData(parseSingleResponse(details.stdout), "pack.list");
+  assert(Array.isArray(detailsData.packs));
+  assert.deepEqual(detailsData.packs.map(withoutPackRoot), [
     {
       name: "integration-pack",
       version: "1.0.0",
@@ -42,7 +62,10 @@ export async function verifyListPacksScenario(
   assert.equal(catalog.exitCode, 0);
   assert.equal(catalog.stderr, "");
   const catalogData = requireSuccessData(parseSingleResponse(catalog.stdout), "pack.list");
-  assert.deepEqual(catalogData.pack, { name: "integration-pack", version: "1.0.0" });
+  assert.deepEqual(withoutPackRoot(catalogData.pack), {
+    name: "integration-pack",
+    version: "1.0.0",
+  });
   assert(Array.isArray(catalogData.practices));
   assert(
     catalogData.practices.some(
@@ -53,6 +76,15 @@ export async function verifyListPacksScenario(
         value.id === fixture.primaryPracticeId,
     ),
   );
+
+  const catalogText = await runList(compiledBinary, fixture.storageRoot, {
+    packName: "integration-pack",
+    format: "text",
+  });
+  assert.equal(catalogText.exitCode, 0);
+  assert.equal(catalogText.stderr, "");
+  assert(catalogText.stdout.includes(fixture.primaryPracticeId));
+  assert.equal(catalogText.stdout.includes('"ok"'), false);
 
   const emptyStoreRoot = join(workingDirectory, "empty-list-store");
   const emptyCatalog = await runList(compiledBinary, emptyStoreRoot);

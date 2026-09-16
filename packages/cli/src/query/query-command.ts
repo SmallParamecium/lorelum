@@ -21,6 +21,8 @@ import {
 } from "@lorelum/engine";
 
 import type { JsonValue } from "../output/protocol.js";
+import { textDefaultOutput } from "../output/formats.js";
+import { renderQueryText } from "../output/text-renderers.js";
 import type { CommandDefinition } from "../registry.js";
 import {
   CliError,
@@ -162,6 +164,8 @@ export function createQueryCommand(services: QueryCommandServices): CommandDefin
         optionRequired: false,
       },
     ],
+    output: textDefaultOutput,
+    textRenderer: renderQueryText,
     resultSchema: queryResultSchema,
     errorCodes: queryErrorCodes,
     exitCodes: [0, 1, 2],

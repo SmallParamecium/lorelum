@@ -5,6 +5,7 @@
 ```sh
 lore pack list
 lore pack list --details
+lore pack list
 lore pack list agentic-coding
 lore get agentic-coding.testing.classify-failure-before-changing-test
 lore --store-root /path/to/isolated-store pack list
@@ -72,9 +73,13 @@ Practice entries are sorted by exact `id`. The returned `id` can be passed direc
 
 `packRoot` is an absolute locator for the active artifact at the Store snapshot used by this command. A caller can browse this explicitly selected Pack root, or resolve a Practice resource target such as `resource:references/checklist.md` from it. It must not guess a root from a Pack name or depend on SQLite/projection layout. After install, update, remove, or recovery changes the Pack state, an earlier root can be stale; rerun the relevant `lore pack list` command or `lore get` to obtain a current locator.
 
+## Output format
+
+Text is the default for `pack list` and provides the readable catalog view. Pass `--json` to preserve the structured result shapes documented above. Every text mode starts with the Store snapshot. The installed-Pack view shows names and versions (and practice counts for the normal catalog); `--details` shows descriptions and applicability; `pack list <pack>` shows stable Practice IDs, titles, and applicability conditions. Empty Stores and empty Pack catalogs receive explicit messages rather than blank output.
+
 ## Errors and boundaries
 
-Success exits `0`. Failures use `ok: false` with `error: { code, message }` and exit `2`. Both success and failure write exactly one JSON line to stdout.
+Success exits `0`; failures exit `2`. With `--json`, success and failure write one JSON line to stdout. In the default text mode, successful catalogs go to stdout and ordinary list errors go to stderr.
 
 | Code | Meaning |
 | --- | --- |

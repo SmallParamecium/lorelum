@@ -175,7 +175,7 @@ test("validate turns unsafe resource directories into structural diagnostics", a
   }
 });
 
-test("rejects localized runtime frontmatter and keeps format error allowlists narrow", async () => {
+test("rejects localized runtime frontmatter and keeps error allowlists narrow", async () => {
   const root = await fixture();
   try {
     await writeFile(

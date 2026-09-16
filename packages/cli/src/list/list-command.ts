@@ -9,6 +9,8 @@ import { PACK_NAME_REGEX } from "@lorelum/format";
 
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
 import { listErrorCodes, throwListVisibleError } from "./errors.js";
+import { textDefaultOutput } from "../output/formats.js";
+import { renderPackListText } from "../output/text-renderers.js";
 import type { CommandDefinition } from "../registry.js";
 import { invalidInvocationError } from "../runtime/errors.js";
 import { resolveInvocationStorageRoot } from "../store/storage-root.js";
@@ -169,6 +171,8 @@ export function createListCommand(services: ListCommandServices): CommandDefinit
         optionRequired: false,
       },
     ],
+    output: textDefaultOutput,
+    textRenderer: renderPackListText,
     resultSchema,
     errorCodes: listErrorCodes,
     exitCodes: [0, 2],

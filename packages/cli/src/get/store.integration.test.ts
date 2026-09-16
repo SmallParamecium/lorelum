@@ -19,7 +19,7 @@ async function withDirectory(action: (directory: string) => Promise<void>) {
   try {
     await action(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { force: true, recursive: true });
   }
 }
 
@@ -81,11 +81,14 @@ async function get(directory: string, rootName = "store", practiceId = id) {
       this.value += message;
     },
   };
-  const exitCode = await run(["get", practiceId, "--store-root", join(directory, rootName)], {
-    registry: snapshotCommandDefinitions([definition]),
-    stdout,
-    stderr,
-  });
+  const exitCode = await run(
+    ["--json", "get", practiceId, "--store-root", join(directory, rootName)],
+    {
+      registry: snapshotCommandDefinitions([definition]),
+      stdout,
+      stderr,
+    },
+  );
   expect(existsSync(unusedRoot)).toBe(false);
   expect(stderr.value).toBe("");
   expect(stdout.value.trim().split("\n")).toHaveLength(1);
@@ -118,12 +121,12 @@ test("returns canonical defaults, author order and merged sources independent of
       {
         packName: "a-pack",
         sourcePath: "practices/read.md",
-        packRoot: expect.stringContaining("/packs/p-a-pack/"),
+        packRoot: expect.stringContaining(join("packs", "p-a-pack")),
       },
       {
         packName: "z-pack",
         sourcePath: "practices/read.md",
-        packRoot: expect.stringContaining("/packs/p-z-pack/"),
+        packRoot: expect.stringContaining(join("packs", "p-z-pack")),
       },
     ]);
     const reverse = await get(directory, "reverse");
@@ -213,7 +216,7 @@ test("resource-only upgrade returns a new locator without changing Practice cont
     const first = await get(directory);
     expect(first.exitCode).toBe(0);
     const firstSource = first.response.data.sources[0];
-    expect(firstSource.packRoot).toEqual(expect.stringContaining("/packs/p-resource-pack/"));
+    expect(firstSource.packRoot).toEqual(expect.stringContaining(join("packs", "p-resource-pack")));
 
     const packPath = join(directory, "resource-pack");
     await writeFile(join(packPath, "references", "api.md"), "second resource bytes\n");
@@ -251,6 +254,7 @@ test("fails when the requested Practice has SQLite row damage", async () => {
 test("requires recovery when SQLite is missing for existing and absent IDs", async () => {
   await withDirectory(async (directory) => {
     const root = await install(directory);
+
     await rm(join(root.rootPath, "store.sqlite"));
     for (const practiceId of [id, "example.absent"]) {
       // eslint-disable-next-line no-await-in-loop -- verify the same damaged Store for both lookups

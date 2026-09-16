@@ -3,6 +3,7 @@ import {
   toolVersion,
   type JsonSchema,
   type JsonValue,
+  type TextOutputMode,
 } from "./output/protocol.js";
 import {
   createListService,
@@ -10,6 +11,8 @@ import {
   createQueryService,
   defaultStorageRoot,
 } from "@lorelum/engine";
+import { jsonOnlyOutput, textDefaultOutput } from "./output/formats.js";
+import { renderVersionText, type TextRenderer } from "./output/text-renderers.js";
 import { frameworkErrorCodes, invalidInvocationError } from "./runtime/errors.js";
 import { logLevels } from "./runtime/logger.js";
 import { createInstallCommand, createUpdateCommand } from "./install/install-command.js";
@@ -27,6 +30,13 @@ import { createIndexCommands } from "./index/index-commands";
 import { createProcessIndexRuntimeClient } from "./index/runtime-client";
 import { createLocalizationCommands } from "./localization/index.js";
 
+export type OutputFormat = "json" | "text";
+
+export interface OutputCapability {
+  readonly formats: readonly OutputFormat[];
+  readonly default: OutputFormat;
+}
+
 export interface CommandOption {
   readonly longFlag: string;
   readonly shortFlag?: string;
@@ -36,7 +46,7 @@ export interface CommandOption {
   /** Requires callers to provide the option; defaults are therefore not allowed. */
   readonly optionRequired: boolean;
   /** Reserved for framework-owned global options on the root command. */
-  readonly behavior?: "help" | "log-level" | "store-root" | "version";
+  readonly behavior?: "help" | "json" | "log-level" | "store-root" | "version";
   /** Framework option availability; local command options omit this field. */
   readonly scope?: "global" | "root";
   /** Static framework response metadata, including its discoverable data contract. */
@@ -44,6 +54,8 @@ export interface CommandOption {
     command: string;
     data: JsonValue;
     resultSchema: JsonSchema;
+    output: OutputCapability;
+    textRenderer?: TextRenderer;
   }>;
   readonly defaultValue?: string;
   readonly values?: readonly string[];
@@ -61,6 +73,12 @@ export interface CommandDefinition {
   readonly summary: string;
   readonly positionals: readonly PositionalArgument[];
   readonly options: readonly CommandOption[];
+  /** Renderer capability declared before argument handling; text is opt-in per command. */
+  readonly output: OutputCapability;
+  /** Command-specific text projection; required exactly when `text` is advertised. */
+  readonly textRenderer?: TextRenderer;
+  /** Defaults to line framing; `verbatim` preserves the renderer's exact string. */
+  readonly textOutputMode?: TextOutputMode;
   /** Validates response `data`; the protocol envelope has its own exported schema. */
   readonly resultSchema: JsonSchema;
   /** Handler errors outside this allowlist are exposed as `runtime.unexpected`. */
@@ -112,6 +130,13 @@ const globalOptions: readonly CommandOption[] = [
     scope: "global",
   },
   {
+    longFlag: "--json",
+    description: "Request JSON output.",
+    optionRequired: false,
+    behavior: "json",
+    scope: "global",
+  },
+  {
     longFlag: "--version",
     shortFlag: "-V",
     description: "Return protocol and tool versions.",
@@ -122,6 +147,8 @@ const globalOptions: readonly CommandOption[] = [
       command: "version",
       data: { protocolVersion, toolVersion },
       resultSchema: versionResultSchema,
+      output: textDefaultOutput,
+      textRenderer: renderVersionText,
     },
   },
   {
@@ -154,13 +181,27 @@ const positionalDescriptionSchema: JsonSchema = {
     values: { type: "array", items: stringSchema },
   },
 };
+const outputDescriptionSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["formats", "default"],
+  properties: {
+    formats: {
+      type: "array",
+      minItems: 1,
+      items: { enum: ["json", "text"] },
+    },
+    default: { enum: ["json", "text"] },
+  },
+};
 const optionResponseDescriptionSchema: JsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["command", "resultSchema"],
+  required: ["command", "resultSchema", "output"],
   properties: {
     command: stringSchema,
     resultSchema: { type: "object" },
+    output: outputDescriptionSchema,
   },
 };
 const optionDescriptionSchema: JsonSchema = {
@@ -172,7 +213,9 @@ const optionDescriptionSchema: JsonSchema = {
     description: stringSchema,
     required: { type: "boolean" },
     scope: { enum: ["command", "global", "root"] },
-    behavior: { enum: ["help", "log-level", "store-root", "version"] },
+    behavior: {
+      enum: ["help", "json", "log-level", "store-root", "version"],
+    },
     response: optionResponseDescriptionSchema,
     defaultValue: stringSchema,
     values: { type: "array", items: stringSchema },
@@ -184,6 +227,7 @@ const commandCapabilityProperties: Readonly<Record<string, JsonSchema>> = {
   summary: stringSchema,
   positionals: { type: "array", items: positionalDescriptionSchema },
   options: { type: "array", items: optionDescriptionSchema },
+  output: outputDescriptionSchema,
   resultSchema: { type: "object" },
   errorCodes: { type: "array", items: stringSchema },
   exitCodes: { type: "array", items: { type: "integer" } },
@@ -194,6 +238,7 @@ const commandCapabilityRequired = [
   "summary",
   "positionals",
   "options",
+  "output",
   "resultSchema",
   "errorCodes",
   "exitCodes",
@@ -222,6 +267,7 @@ const discoveryCommandDefinition = {
   summary: "Return machine-readable command capabilities.",
   positionals: [{ name: "command", required: false }],
   options: [],
+  output: jsonOnlyOutput,
   resultSchema: discoveryResultSchema,
   errorCodes: frameworkErrorCodes,
   exitCodes: [0, 2],
@@ -236,6 +282,7 @@ export const rootCommand = snapshotCommandDefinition({
   summary: "Engineering knowledge tooling for AI coding agents.",
   positionals: [],
   options: globalOptions,
+  output: jsonOnlyOutput,
   resultSchema: rootCapabilitySchema,
   errorCodes: frameworkErrorCodes,
   exitCodes: [0, 2],
@@ -280,7 +327,7 @@ export const commandRegistry = snapshotCommandDefinitions([
   ...createLocalizationCommands(),
 ]);
 
-export type KnownCommand = "lore" | (typeof commandRegistry)[number]["name"];
+export type KnownCommand = "lore" | "version" | (typeof commandRegistry)[number]["name"];
 
 export function describeCommand(
   command?: string,
@@ -323,7 +370,11 @@ interface CommandOptionDescription {
   readonly required: boolean;
   readonly scope: "command" | "global" | "root";
   readonly behavior?: CommandOption["behavior"];
-  readonly response?: Readonly<{ command: string; resultSchema: JsonSchema }>;
+  readonly response?: Readonly<{
+    command: string;
+    resultSchema: JsonSchema;
+    output: OutputCapability;
+  }>;
   readonly defaultValue?: string;
   readonly values?: readonly string[];
 }
@@ -352,6 +403,7 @@ function materializeCommandDefinition(
       const values = positionalValues(definition, positional, definitions);
       return { ...positional, ...(values === undefined ? {} : { values }) };
     }),
+    output: copyOutputCapability(definition.output),
     options: options.map((option) => ({
       name: commandOptionDeclaration(option),
       description: option.description,
@@ -364,6 +416,7 @@ function materializeCommandDefinition(
             response: {
               command: option.response.command,
               resultSchema: option.response.resultSchema,
+              output: copyOutputCapability(option.response.output),
             },
           }),
       ...(option.defaultValue === undefined ? {} : { defaultValue: option.defaultValue }),
@@ -423,18 +476,75 @@ function snapshotCommandDefinition(definition: CommandDefinition): CommandDefini
           ...(option.value === undefined ? {} : { value: Object.freeze({ ...option.value }) }),
           ...(option.response === undefined
             ? {}
-            : { response: deepFreeze(structuredClone(option.response)) }),
+            : {
+                response: deepFreeze({
+                  command: option.response.command,
+                  data: structuredClone(option.response.data),
+                  resultSchema: structuredClone(option.response.resultSchema),
+                  output: copyOutputCapability(option.response.output),
+                  ...(option.response.textRenderer === undefined
+                    ? {}
+                    : { textRenderer: option.response.textRenderer }),
+                }),
+              }),
           ...(option.values === undefined ? {} : { values: Object.freeze([...option.values]) }),
         }),
       ),
     ),
+    output: deepFreeze(copyOutputCapability(definition.output)),
     resultSchema: deepFreeze(structuredClone(definition.resultSchema)),
     errorCodes: Object.freeze([...definition.errorCodes]),
     exitCodes: Object.freeze([...definition.exitCodes]),
   });
 }
 
+function copyOutputCapability(output: OutputCapability): OutputCapability {
+  return { formats: [...output.formats], default: output.default };
+}
+
+function isValidOutputCapability(output: OutputCapability | undefined): output is OutputCapability {
+  return (
+    output !== undefined &&
+    Array.isArray(output.formats) &&
+    output.formats.length > 0 &&
+    new Set(output.formats).size === output.formats.length &&
+    output.formats.every((format) => format === "json" || format === "text") &&
+    output.formats.includes("json") &&
+    output.formats.includes(output.default)
+  );
+}
+
+function assertOutputCapabilityAndRenderer(
+  output: OutputCapability | undefined,
+  textRenderer: CommandDefinition["textRenderer"],
+  invalidOutputMessage: string,
+  rendererMismatchMessage: string,
+): void {
+  if (!isValidOutputCapability(output)) throw new Error(invalidOutputMessage);
+  if (output.formats.includes("text") !== (textRenderer !== undefined)) {
+    throw new Error(rendererMismatchMessage);
+  }
+}
+
 function assertFrameworkMetadata(definition: CommandDefinition): void {
+  assertOutputCapabilityAndRenderer(
+    definition.output,
+    definition.textRenderer,
+    `Command "${definition.name}" declares invalid output format metadata.`,
+    `Command "${definition.name}" must declare a text renderer exactly when it supports text.`,
+  );
+  if (
+    definition.textOutputMode !== undefined &&
+    definition.textOutputMode !== "line" &&
+    definition.textOutputMode !== "verbatim"
+  ) {
+    throw new Error(`Command "${definition.name}" declares an invalid text output mode.`);
+  }
+  if (definition.textOutputMode !== undefined && definition.textRenderer === undefined) {
+    throw new Error(
+      `Command "${definition.name}" cannot declare a text output mode without a text renderer.`,
+    );
+  }
   if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/.test(definition.name)) {
     throw new Error(`Command name "${definition.name}" must be a dotted kebab-case id.`);
   }
@@ -475,6 +585,14 @@ function assertFrameworkMetadata(definition: CommandDefinition): void {
     if ((option.behavior === "version") !== (option.response !== undefined)) {
       throw new Error(
         `Command "${definition.name}" version behavior requires exactly one response.`,
+      );
+    }
+    if (option.response !== undefined) {
+      assertOutputCapabilityAndRenderer(
+        option.response.output,
+        option.response.textRenderer,
+        `Command "${definition.name}" version response declares invalid output metadata.`,
+        `Command "${definition.name}" version response must declare a text renderer exactly when it supports text.`,
       );
     }
     if (option.optionRequired && option.defaultValue !== undefined) {

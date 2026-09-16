@@ -8,8 +8,15 @@ import {
   type CodexHookServices,
   type TextInput,
 } from "./hook/codex.js";
-import { renderFailure, type OutputWriter } from "./output/protocol.js";
-import { rootCommand, type CommandDefinition, type KnownCommand } from "./registry.js";
+import { renderFailure, renderTextFailure, type OutputWriter } from "./output/protocol.js";
+import { resolveOutputFormat } from "./output/format-selection.js";
+import {
+  commandRegistry,
+  rootCommand,
+  type CommandDefinition,
+  type KnownCommand,
+  type OutputFormat,
+} from "./registry.js";
 import { toVisibleCliError } from "./runtime/errors.js";
 import { Logger } from "./runtime/logger.js";
 
@@ -42,9 +49,18 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
   }
   let command: KnownCommand | "unknown" = "unknown";
   let commandExitCode: 0 | 1 = 0;
+  let outputFormat: OutputFormat = "json";
   let visibleErrorCodes = rootCommand.errorCodes;
 
   try {
+    const definitions = options.registry ?? commandRegistry;
+    const formatSelection = resolveOutputFormat(arguments_, definitions);
+    if (formatSelection.definition !== rootCommand || formatSelection.response !== undefined) {
+      command = formatSelection.commandName as KnownCommand | "unknown";
+    }
+    outputFormat = formatSelection.format;
+    visibleErrorCodes = formatSelection.definition?.errorCodes ?? rootCommand.errorCodes;
+
     const runtime = options.runtime ?? { logger: new Logger(stderr) };
     const program = createProgram(
       runtime,
@@ -59,12 +75,17 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
         },
       },
       options.registry,
+      outputFormat,
     );
     await program.parseAsync(arguments_, { from: "user" });
     return commandExitCode;
   } catch (error) {
     const cliError = toVisibleCliError(error, visibleErrorCodes);
-    renderFailure(stdout, command, cliError.code, cliError.message);
+    if (outputFormat === "text") {
+      renderTextFailure(stderr, cliError.code, cliError.message);
+    } else {
+      renderFailure(stdout, command, cliError.code, cliError.message);
+    }
     return cliError.exitCode;
   }
 }

@@ -30,6 +30,9 @@ export interface OutputWriter {
   write(message: string): void;
 }
 
+/** Controls whether a text projection gets a terminal line feed added. */
+export type TextOutputMode = "line" | "verbatim";
+
 interface EnvelopeBase {
   protocolVersion: number;
   toolVersion: string;
@@ -119,7 +122,25 @@ export function renderFailure(
   writer.write(`${JSON.stringify(response)}\n`);
 }
 
-function assertJsonValue(value: unknown, ancestors: WeakSet<object> = new WeakSet()): void {
+/** Writes a plain-text projection, optionally preserving the renderer output exactly. */
+export function renderTextSuccess(
+  writer: OutputWriter,
+  text: string,
+  mode: TextOutputMode = "line",
+): void {
+  if (typeof text !== "string") throw new TypeError("Text renderers must return a string.");
+  writer.write(mode === "verbatim" || text.endsWith("\n") ? text : `${text}\n`);
+}
+
+export function renderTextFailure(writer: OutputWriter, code: string, message: string): void {
+  writer.write(`error[${code}]: ${message}\n`);
+}
+
+export function assertJsonValue(value: unknown): asserts value is JsonValue {
+  assertJsonValueInternal(value, new WeakSet());
+}
+
+function assertJsonValueInternal(value: unknown, ancestors: WeakSet<object>): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (Number.isFinite(value)) return;
@@ -135,7 +156,7 @@ function assertJsonValue(value: unknown, ancestors: WeakSet<object> = new WeakSe
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      for (const item of value) assertJsonValue(item, ancestors);
+      for (const item of value) assertJsonValueInternal(item, ancestors);
       return;
     }
 
@@ -147,7 +168,7 @@ function assertJsonValue(value: unknown, ancestors: WeakSet<object> = new WeakSe
       throw new TypeError("Protocol data contains symbol properties.");
     }
     for (const nestedValue of Object.values(value)) {
-      assertJsonValue(nestedValue, ancestors);
+      assertJsonValueInternal(nestedValue, ancestors);
     }
   } finally {
     ancestors.delete(value);

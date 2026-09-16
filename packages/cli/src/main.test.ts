@@ -139,7 +139,7 @@ test("returns structured help and version responses", async () => {
   });
   expect(validateProtocolSchema(JSON.parse(help.value), protocolResponseSchema)).toEqual([]);
 
-  expect(await run(["--version"], { stdout: version })).toBe(0);
+  expect(await run(["--version", "--json"], { stdout: version })).toBe(0);
   const versionResponse = JSON.parse(version.value);
   expect(versionResponse).toEqual({
     protocolVersion: 1,
@@ -165,7 +165,7 @@ test("validates invalid calls before help and version responses", async () => {
   const invalidCalls = [
     ["unknown", "--help"],
     ["describe", "unknown", "--help"],
-    ["unknown", "--version"],
+    ["unknown"],
     ["--help", "--version"],
     ["describe", "--version"],
     ["--log-level"],
@@ -178,7 +178,7 @@ test("validates invalid calls before help and version responses", async () => {
       const stdout = new MemoryWriter();
       const stderr = new MemoryWriter();
 
-      expect(await run(args, { stderr, stdout })).toBe(2);
+      expect(await run(["--json", ...args], { stderr, stdout })).toBe(2);
       expect(JSON.parse(stdout.value)).toMatchObject({
         ok: false,
         error: { code: "usage.invalid", message: "The command invocation is invalid." },
@@ -188,4 +188,71 @@ test("validates invalid calls before help and version responses", async () => {
       expect(validateProtocolSchema(JSON.parse(stdout.value), protocolResponseSchema)).toEqual([]);
     }),
   );
+});
+
+test("keeps unknown command failures in the JSON fallback", async () => {
+  const stdout = new MemoryWriter();
+  const stderr = new MemoryWriter();
+
+  expect(await run(["not-a-command"], { stdout, stderr })).toBe(2);
+  expect(JSON.parse(stdout.value)).toMatchObject({
+    command: "unknown",
+    ok: false,
+    error: { code: "usage.invalid" },
+  });
+  expect(stderr.value).toBe("");
+});
+
+test("renders text for the static version response by default", async () => {
+  const stdout = new MemoryWriter();
+  const stderr = new MemoryWriter();
+
+  expect(await run(["--version"], { stdout, stderr })).toBe(0);
+  expect(stdout.value).toBe(`Lorelum ${toolVersion} (protocol 1)\n`);
+  expect(stderr.value).toBe("");
+});
+
+test("accepts --json without changing the JSON output contract", async () => {
+  await Promise.all(
+    [["--json"], ["describe", "--json"], ["--version", "--json"]].map(async (args) => {
+      const stdout = new MemoryWriter();
+      const stderr = new MemoryWriter();
+
+      expect(await run(args, { stderr, stdout })).toBe(0);
+      expect(JSON.parse(stdout.value)).toMatchObject({ ok: true });
+      expect(stderr.value).toBe("");
+    }),
+  );
+});
+test("rejects removed output selectors as ordinary invalid options", async () => {
+  const cases = [
+    ["get", "placeholder", "--format=csv"],
+    ["get", "placeholder", "--format", "text"],
+    ["get", "placeholder", "--human"],
+    ["get", "placeholder", "--agent"],
+  ];
+
+  await Promise.all(
+    cases.map(async (args) => {
+      const stdout = new MemoryWriter();
+      const stderr = new MemoryWriter();
+
+      expect(await run(["--json", ...args], { stderr, stdout })).toBe(2);
+      expect(JSON.parse(stdout.value)).toMatchObject({
+        command: "get",
+        ok: false,
+        error: { code: "usage.invalid" },
+      });
+      expect(stdout.value.trimEnd().split("\n")).toHaveLength(1);
+      expect(stderr.value).toBe("");
+    }),
+  );
+});
+test("routes default text invocation failures to stderr without writing stdout", async () => {
+  const stdout = new MemoryWriter();
+  const stderr = new MemoryWriter();
+
+  expect(await run(["query"], { stderr, stdout })).toBe(2);
+  expect(stdout.value).toBe("");
+  expect(stderr.value).toBe("error[usage.invalid]: The command invocation is invalid.\n");
 });

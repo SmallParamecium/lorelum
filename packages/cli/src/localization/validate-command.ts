@@ -2,6 +2,7 @@ import { relative, sep } from "node:path";
 
 import { decodePackDirectory, PackValidationError, SnapshotFormatError } from "@lorelum/engine";
 import { analyzeLocalizationState, type ValidationIssue } from "@lorelum/format";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition, CommandResult } from "../registry.js";
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
 import { frameworkErrorCodes, cliErrorCodes } from "../runtime/errors.js";
@@ -163,6 +164,7 @@ export function createValidateCommand(): CommandDefinition {
     summary: "Validate a Pack and report localization state.",
     positionals: [{ name: "pack-root", required: true }],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: validateResultSchema,
     errorCodes: validateErrors,
     exitCodes: [0, 1, 2],

@@ -7,6 +7,7 @@ Pack mutations operate on one LocalStore. Use the global `--store-root <path>` o
 ```sh
 # Install the latest Registry release selected by the Registry contract.
 lore pack install agentic-coding
+lore pack install agentic-coding
 
 # Install or update one exact release from a chosen Registry repository.
 lore pack install agentic-coding@0.1.0 --registry acme/team-packs
@@ -20,6 +21,10 @@ lore pack list
 lore pack list --details
 lore pack list agentic-coding
 ```
+
+## Install output format
+
+The adapted `lore pack install` command is text by default; pass `--json` for the machine-readable envelope. Update and remove remain JSON-only. The install text receipt summarizes the resolved Pack/Registry/source, committed Store snapshot, Practice changes, diagnostics, cleanup status, and semantic-index synchronization state. It intentionally omits the machine-oriented artifact digest. Text mode does not change installation behavior or exit codes.
 
 `lore pack install` is idempotent only when the resolved artifact matches the active Pack exactly. If the same Pack name resolves to different content, it returns `pack.update-required` and leaves the Store unchanged. Use `lore pack update` to replace that Pack's sources with the selected release.
 

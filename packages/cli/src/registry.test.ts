@@ -10,6 +10,8 @@ import {
 } from "./registry.js";
 import { CliError, cliErrorCodes, frameworkErrorCodes } from "./runtime/errors.js";
 import { Logger } from "./runtime/logger.js";
+import { jsonOnlyOutput, textDefaultOutput } from "./output/formats.js";
+import { resolveOutputFormat } from "./output/format-selection.js";
 
 class MemoryWriter {
   value = "";
@@ -32,6 +34,7 @@ const futureCommand: CommandDefinition = {
       values: ["safe"],
     },
   ],
+  output: jsonOnlyOutput,
   resultSchema: { type: "object" },
   errorCodes: frameworkErrorCodes,
   exitCodes: [0, 2],
@@ -57,8 +60,10 @@ test("discovers the supported Pack lifecycle and catalog commands", () => {
   };
   expect(update.name).toBe("pack.update");
   expect(update.usage).toBe("pack update <pack[@version]>");
+  expect(update).toMatchObject({ output: { formats: ["json"], default: "json" } });
   expect(update.options.map((option) => option.name)).toEqual([
     "-h, --help",
+    "--json",
     "--log-level <level>",
     "--store-root <path>",
     "--registry <repository>",
@@ -75,6 +80,7 @@ test("discovers the supported Pack lifecycle and catalog commands", () => {
   expect(remove.usage).toBe("pack remove <pack>");
   expect(remove.options.map((option) => option.name)).toEqual([
     "-h, --help",
+    "--json",
     "--log-level <level>",
     "--store-root <path>",
   ]);
@@ -90,11 +96,133 @@ test("discovers the supported Pack lifecycle and catalog commands", () => {
   expect(list.usage).toBe("pack list [pack]");
   expect(list.options.map((option) => option.name)).toEqual([
     "-h, --help",
+    "--json",
     "--log-level <level>",
     "--store-root <path>",
     "--details",
   ]);
   expect(list.errorCodes).toContain("pack.not-installed");
+});
+
+test("advertises text defaults for completed renderers and keeps JSON-only commands machine-readable", () => {
+  for (const name of ["get", "pack.list", "pack.install", "query"]) {
+    expect(describeCommand(name)).toMatchObject({
+      output: { formats: ["json", "text"], default: "text" },
+    });
+  }
+  expect(describeCommand("pack.update")).toMatchObject({
+    output: { formats: ["json"], default: "json" },
+  });
+  expect(describeCommand("lore")).toMatchObject({
+    options: expect.arrayContaining([
+      expect.objectContaining({
+        behavior: "version",
+        response: expect.objectContaining({
+          output: { formats: ["json", "text"], default: "text" },
+        }),
+      }),
+    ]),
+  });
+
+  expect(resolveOutputFormat(["--version"], commandRegistry)).toMatchObject({
+    commandName: "version",
+    format: "text",
+  });
+  expect(resolveOutputFormat(["--version", "--json"], commandRegistry)).toMatchObject({
+    commandName: "version",
+    format: "json",
+  });
+});
+
+test("keeps JSON-only commands in JSON and allows --json as an explicit override", () => {
+  const jsonOnlyCommands = commandRegistry.filter(
+    (command) => command.output.formats.length === 1 && command.output.formats[0] === "json",
+  );
+
+  expect(jsonOnlyCommands.length).toBeGreaterThan(0);
+  for (const command of jsonOnlyCommands) {
+    const selection = resolveOutputFormat([...command.name.split(".")], commandRegistry);
+    expect(selection.definition?.name).toBe(command.name);
+    expect(selection.format).toBe("json");
+    expect(
+      resolveOutputFormat([...command.name.split("."), "--json"], commandRegistry).format,
+    ).toBe("json");
+  }
+});
+test("selects the deepest registered command when a parent is also executable", () => {
+  const parent: CommandDefinition = {
+    ...futureCommand,
+    name: "group",
+    options: [],
+  };
+  const child: CommandDefinition = {
+    ...futureCommand,
+    name: "group.child",
+    options: [],
+    output: textDefaultOutput,
+    textRenderer: () => "child",
+  };
+
+  const selection = resolveOutputFormat(["group", "child"], [parent, child]);
+
+  expect(selection.definition?.name).toBe("group.child");
+  expect(selection.format).toBe("text");
+
+  const parentSelection = resolveOutputFormat(["group"], [parent, child]);
+  expect(parentSelection.definition?.name).toBe("group");
+  expect(parentSelection.format).toBe("json");
+});
+
+test("does not interpret --json after -- or in option values as a format flag", () => {
+  const textCommand: CommandDefinition = {
+    ...futureCommand,
+    name: "future-text",
+    output: textDefaultOutput,
+    textRenderer: () => "future text",
+  };
+
+  const afterTerminator = resolveOutputFormat(["future-text", "--", "--json"], [textCommand]);
+  expect(afterTerminator).toMatchObject({ commandName: "future-text", format: "text" });
+
+  const optionValue = resolveOutputFormat(
+    ["future-text", "--future-mode", "--json"],
+    [textCommand],
+  );
+  expect(optionValue).toMatchObject({ commandName: "future-text", format: "text" });
+
+  expect(resolveOutputFormat(["future-text", "--json"], [textCommand]).format).toBe("json");
+});
+test("requires every command to declare valid output capability metadata", () => {
+  expect(() =>
+    snapshotCommandDefinitions([{ ...futureCommand, output: undefined as never }]),
+  ).toThrow('Command "future" declares invalid output format metadata.');
+  expect(() =>
+    snapshotCommandDefinitions([
+      { ...futureCommand, output: { formats: [] as const, default: "json" as const } },
+    ]),
+  ).toThrow('Command "future" declares invalid output format metadata.');
+  expect(() =>
+    snapshotCommandDefinitions([
+      {
+        ...futureCommand,
+        output: { formats: ["text"] as const, default: "text" as const },
+        textRenderer: () => "future command text",
+      },
+    ]),
+  ).toThrow('Command "future" declares invalid output format metadata.');
+  expect(() =>
+    snapshotCommandDefinitions([
+      { ...futureCommand, output: { formats: ["json"] as const, default: "text" as const } },
+    ]),
+  ).toThrow('Command "future" declares invalid output format metadata.');
+  expect(() =>
+    snapshotCommandDefinitions([
+      {
+        ...futureCommand,
+        output: { formats: ["json", "text"] as const, default: "json" as const },
+      },
+    ]),
+  ).toThrow('Command "future" must declare a text renderer exactly when it supports text.');
 });
 
 test("rejects command metadata that omits framework errors or exit codes", () => {
@@ -233,6 +361,7 @@ test("describes registered commands from a single registry", () => {
     name: "lore",
     options: [
       { behavior: "help", name: "-h, --help", scope: "global" },
+      { behavior: "json", name: "--json", scope: "global" },
       {
         behavior: "version",
         name: "-V, --version",
@@ -315,6 +444,7 @@ test("describes registered commands from a single registry", () => {
   expect(describeCommand("describe")).toMatchObject({
     options: [
       { behavior: "help", scope: "global" },
+      { behavior: "json", scope: "global" },
       { behavior: "log-level", scope: "global" },
       { behavior: "store-root", scope: "global" },
     ],
@@ -327,6 +457,7 @@ test("describes registered commands from a single registry", () => {
   expect(install.usage).toBe("pack install <pack[@version]>");
   expect(install.options.map((option) => option.name)).toEqual([
     "-h, --help",
+    "--json",
     "--log-level <level>",
     "--store-root <path>",
     "--registry <repository>",
@@ -348,6 +479,7 @@ test("derives parser options and describe metadata from registered commands", as
     name: "future",
     options: [
       { behavior: "help", scope: "global" },
+      { behavior: "json", scope: "global" },
       { behavior: "log-level", scope: "global" },
       { behavior: "store-root", scope: "global" },
       { name: "--future-mode <mode>", scope: "command" },
@@ -401,7 +533,11 @@ test("derives parser options and describe metadata from registered commands", as
 
   const help = new MemoryWriter();
   expect(await run(["future", "--help"], { registry: definitions, stdout: help })).toBe(0);
-  expect(JSON.parse(help.value)).toMatchObject({ command: "describe", data: { name: "future" } });
+  expect(JSON.parse(help.value)).toMatchObject({
+    command: "describe",
+    ok: true,
+    data: { name: "future" },
+  });
 });
 
 test("keeps parser and describe on the same immutable program snapshot", async () => {
@@ -420,6 +556,7 @@ test("keeps parser and describe on the same immutable program snapshot", async (
 
   expect(JSON.parse(stdout.value)).toMatchObject({
     command: "describe",
+    ok: true,
     data: { name: "future" },
   });
 });
@@ -430,6 +567,7 @@ test("returns exit code 1 with a successful blocking domain result", async () =>
     summary: "Report a completed blocking domain finding.",
     positionals: [],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: { type: "object" },
     errorCodes: frameworkErrorCodes,
     exitCodes: [0, 1, 2],
@@ -457,6 +595,7 @@ test("renders one failure when a handler returns an undeclared completion", asyn
     summary: "Exercise centralized completion validation.",
     positionals: [],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: { type: "object" },
     errorCodes: frameworkErrorCodes,
     exitCodes: [0, 2],
@@ -479,6 +618,7 @@ test("normalizes non-JSON-safe handler data before any success is written", asyn
     summary: "Exercise the JSON-safe process boundary.",
     positionals: [],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: { type: "object" },
     errorCodes: frameworkErrorCodes,
     exitCodes: [0, 2],
@@ -501,6 +641,7 @@ test("normalizes handler errors that are not visible in command metadata", async
     summary: "Exercise the visible error allowlist.",
     positionals: [],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: { type: "object" },
     errorCodes: frameworkErrorCodes,
     exitCodes: [0, 2],
@@ -534,6 +675,7 @@ test("preserves handler errors declared in command metadata", async () => {
     summary: "Exercise a declared domain error.",
     positionals: [],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: { type: "object" },
     errorCodes: [...frameworkErrorCodes, "domain.visible"],
     exitCodes: [0, 2],
@@ -567,6 +709,7 @@ test("registers parent and nested commands from dotted command names", async () 
       summary: "Return configuration capabilities.",
       positionals: [],
       options: [],
+      output: jsonOnlyOutput,
       resultSchema: { type: "object" },
       errorCodes: frameworkErrorCodes,
       exitCodes: [0, 2],
@@ -577,6 +720,7 @@ test("registers parent and nested commands from dotted command names", async () 
       summary: "Return the selected configuration path.",
       positionals: [],
       options: [],
+      output: jsonOnlyOutput,
       resultSchema: { type: "object" },
       errorCodes: frameworkErrorCodes,
       exitCodes: [0, 2],

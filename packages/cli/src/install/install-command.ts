@@ -17,6 +17,8 @@ import type { IndexRuntimeClient } from "@lorelum/backend/coordination";
 
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
 import type { OutputWriter } from "../output/protocol.js";
+import { jsonOnlyOutput, textDefaultOutput } from "../output/formats.js";
+import { renderPackInstallText } from "../output/text-renderers.js";
 import type { CommandDefinition } from "../registry.js";
 import { CliError, cliErrorCodes, frameworkErrorCodes } from "../runtime/errors.js";
 import { resolveInvocationStorageRoot } from "../store/storage-root.js";
@@ -342,6 +344,8 @@ function createRegistryMutationCommand(
         optionRequired: false,
       },
     ],
+    output: operation === "install" ? textDefaultOutput : jsonOnlyOutput,
+    ...(operation === "install" ? { textRenderer: renderPackInstallText } : {}),
     resultSchema: operation === "install" ? installResultSchema : registryMutationResultSchema,
     errorCodes: operation === "install" ? installErrorCodes : updateErrorCodes,
     exitCodes: [0, 2],

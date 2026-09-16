@@ -8,6 +8,8 @@
 lore pack list
 lore pack list agentic-coding
 lore get agentic-coding.testing.classify-failure-before-changing-test
+lore get agentic-coding.testing.classify-failure-before-changing-test
+lore get agentic-coding.testing.classify-failure-before-changing-test
 lore --store-root /path/to/isolated-store get agentic-coding.testing.classify-failure-before-changing-test
 lore describe get
 ```
@@ -39,6 +41,22 @@ data: {
 
 When `sources` has more than one item, their roots remain distinct. Do not silently select the first source or combine their `references/`, `assets/`, or `scripts/` directories. Select a source using the current task's Pack context, or preserve the ambiguity for the caller. A `packRoot` identifies the artifact observed by this invocation only. If a later Pack update makes it unavailable or inconsistent, call `lore get` again (or explicitly select a Pack with `lore pack list <name>`) instead of deriving a replacement from Store internals.
 
+## Output format
+
+Text is the default for `get` and writes only the complete Markdown body. To request the machine-readable result shown above, pass `--json`:
+
+```sh
+lore get <practice-id> --json
+```
+
+Text mode writes the canonical `practice.body` to stdout without a JSON envelope, title, ID, source metadata, or an automatically added final newline. The body is preserved exactly as returned by the LocalStore (whose canonicalization normalizes line endings to LF). This makes redirection suitable for saving the body without changing its ending:
+
+```sh
+lore get <practice-id> > practice.md
+```
+
+Without `--json`, `get` outputs the complete body as text.
+
 ## Store behavior
 
 Each invocation calls the Engine's `LocalStore.getEffectivePracticeWithPackRoots()` for the selected root. The storage layer performs a parameterized SQLite primary-key lookup joined with all source rows, then runs the same canonical, digest, path, and row validation used by full snapshot reads. It verifies and hashes every active artifact that supplied the returned Practice, checks its sealed projection, and confirms the Store identity again before returning the locators. It does not audit unrelated Pack artifacts. Existing operation-journal convergence and Store initialization/recovery behavior remain in force.
@@ -49,7 +67,7 @@ Separate invocations can observe different Store revisions; there is no cross-co
 
 ## Errors and exit codes
 
-Success exits `0`. Failures use `ok: false` with `error: { code, message }` and exit `2`. Both success and failure write exactly one JSON line to stdout.
+Success exits `0`. Failures exit `2`. With `--json`, success and failure write exactly one JSON line to stdout. In the default text mode, successful output is the body on stdout and ordinary get failures are concise diagnostics on stderr.
 
 | Code | Meaning |
 | --- | --- |

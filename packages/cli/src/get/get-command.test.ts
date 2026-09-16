@@ -70,7 +70,7 @@ async function invoke(args: readonly string[], store: GetCommandServices["store"
     },
   };
   const definition = createGetCommand({ store, storageRoot: { rootPath: "unused-default" } });
-  const exitCode = await run([...args], {
+  const exitCode = await run([...args, "--json"], {
     registry: snapshotCommandDefinitions([definition]),
     stdout,
     stderr,
@@ -109,6 +109,44 @@ test("returns the verified snapshot once with complete content and compact prove
   expect(validateJsonSchema(result.response.data, result.definition.resultSchema)).toEqual([]);
 });
 
+async function invokeText(args: readonly string[], store: GetCommandServices["store"]) {
+  const stdout = {
+    value: "",
+    write(message: string) {
+      this.value += message;
+    },
+  };
+  const stderr = {
+    value: "",
+    write(message: string) {
+      this.value += message;
+    },
+  };
+  const definition = createGetCommand({ store, storageRoot: { rootPath: "unused-default" } });
+  const exitCode = await run([...args], {
+    registry: snapshotCommandDefinitions([definition]),
+    stdout,
+    stderr,
+  });
+  return { exitCode, stdout: stdout.value, stderr: stderr.value };
+}
+
+test.each([["--json", ["--json", "get", practice.id]]] as const)(
+  "explicit get selector %s preserves the complete JSON caller contract",
+  async (_selector, args) => {
+    const result = await invoke(args, {
+      async getEffectivePracticeWithPackRoots() {
+        return { ...located, effectivePractice: effective };
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.response).toMatchObject({ command: "get", ok: true });
+    expect(result.response.data.practice.body).toBe(practice.body);
+    expect(result.response.data.contentDigest).toBe(contentDigest);
+    expect(validateJsonSchema(result.response.data, result.definition.resultSchema)).toEqual([]);
+  },
+);
 test.each([
   { args: ["--store-root", "relative-store", "get", practice.id] },
   { args: ["get", practice.id, "--store-root=relative-store"] },
@@ -120,6 +158,69 @@ test.each([
     },
   });
   expect(result.exitCode).toBe(0);
+});
+
+test("text get defaults to the complete Practice body", async () => {
+  const result = await invokeText(["get", practice.id], {
+    async getEffectivePracticeWithPackRoots() {
+      return { ...located, effectivePractice: effective };
+    },
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe(practice.body);
+  expect(result.stdout).not.toContain('"ok"');
+  expect(result.stdout).not.toContain("contentDigest");
+  expect(result.stderr).toBe("");
+});
+
+test("text get preserves a Practice body without a final line feed", async () => {
+  const body = "## Guidance\n\nKeep the final byte exactly as authored.";
+  const result = await invokeText(["get", practice.id], {
+    async getEffectivePracticeWithPackRoots() {
+      return {
+        ...located,
+        effectivePractice: {
+          ...effective,
+          practice: { ...effective.practice, body },
+        },
+      };
+    },
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe(body);
+  expect(result.stdout.endsWith("\n")).toBe(false);
+  expect(result.stderr).toBe("");
+});
+
+test("text get preserves CRLF and repeated trailing line feeds verbatim", async () => {
+  const body = ["## Guidance", "", "Keep these line endings.", ""].join("\r\n") + "\r\n";
+  const result = await invokeText(["get", practice.id], {
+    async getEffectivePracticeWithPackRoots() {
+      return {
+        ...located,
+        effectivePractice: {
+          ...effective,
+          practice: { ...effective.practice, body },
+        },
+      };
+    },
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toBe(body);
+  expect(result.stderr).toBe("");
+});
+test("text get failures go to stderr without changing the exit code", async () => {
+  const result = await invokeText(["get", "sample.absent"], {
+    async getEffectivePracticeWithPackRoots() {
+      return undefined;
+    },
+  });
+  expect(result.exitCode).toBe(2);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toBe(
+    "error[practice.not-found]: The requested Practice was not found in the selected local Store.\n",
+  );
 });
 
 test.each(
@@ -187,6 +288,7 @@ test("publishes get arguments, schema, error allowlist, and exit codes through d
     positionals: [{ name: "practice-id", required: true }],
     errorCodes: definition.errorCodes,
     exitCodes: [0, 2],
+    output: { formats: ["json", "text"], default: "text" },
     resultSchema: definition.resultSchema,
   });
 });
