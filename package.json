@@ -10,6 +10,7 @@
     "dev:site": "bun run --filter @lorelum/site dev",
     "test": "bun test",
     "test:integration": "bun packages/cli/integration/process.integration.ts",
+    "test:native-smoke": "bun packages/cli/integration/project-context-native-smoke.integration.ts",
     "lint": "oxlint .",
     "fmt": "oxfmt --write .",
     "fmt:check": "oxfmt --check . '!**/*.md' '!**/*.mdx'",

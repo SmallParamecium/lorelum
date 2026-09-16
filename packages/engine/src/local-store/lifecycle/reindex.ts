@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import type { LocalStoreRepository } from "../../persistence/repositories/local-store";
 import { diffEffectivePractices } from "../model";
 import { rebuildEffectivePracticesFromManifest } from "../storage/artifacts/rebuild";
+import { syncCurrentPackLocators } from "../storage/artifacts/current-locator";
 import { SqliteStateError, StoreRecoveryRequiredError } from "../storage/errors";
 import {
   clearOperationJournal,
@@ -147,6 +148,7 @@ export async function reindexStore(
       const journal = createOperationJournalRecord("reindex", manifest, targetManifest);
       await writeOperationJournal(rootPath, journal);
       await writeManifest(rootPath, targetManifest);
+      await syncCurrentPackLocators(rootPath, targetManifest);
       const derivedState = {
         generation: targetManifest.generation,
         effectiveRevision: targetManifest.effectiveRevision,

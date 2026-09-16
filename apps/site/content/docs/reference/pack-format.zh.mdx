@@ -59,9 +59,9 @@ lore validate /path/to/pack
 
 ## 调用方如何使用资源
 
-执行 `lore get <practice-id>` 后，每个 source 会包含 `packName`、`sourcePath` 和当前本地 `packRoot`。使用同一个 source 的 root 解析 `resource:` 路径。调用方明确选择一个 Pack 时，也可通过 `lore pack list <pack-name>` 获得同类 locator。locator 的生命周期和多 source 规则见 [get 参考](./get)与[Pack 命令](./packs)。
+执行 `lore get <practice-id>` 后，每个 source 会包含 `packName`、`sourcePath` 和当前本地 `packRoot`。该 root 是可直接读取的 `current` view，不是 artifact digest 目录。使用同一个 source 的 root 解析 `resource:` 路径。调用方明确选择一个 Pack 时，也可通过 `lore pack list <pack-name>` 或成功的 install/update 获得同类 locator。locator 的生命周期和多 source 规则见 [get 参考](./get)与[Pack 命令](./packs)。
 
-这是一条路由约定，不是访问控制系统。`resource:` 推荐与当前 Practice 相匹配的材料；它不限制调用方浏览明确选择的 Pack root。不要从 Pack 名或 Store 内部实现推导路径。更新后旧 root 不可用时，重新执行 `lore get` 或 `lore pack list`。
+这是一条路由约定，不是访问控制系统。`resource:` 推荐与当前 Practice 相匹配的材料；它不限制调用方浏览明确选择的 Pack root。不要从 Pack 名或 Store 内部实现推导路径。后续 mutation 可能让现有 `current` 路径解析到新 bytes，或使其消失；在把它作为当前 source 使用前重新执行 `lore get` 或 `lore pack list`。
 
 reference 按需读取；asset 先复制到目标工作区再编辑；script 仅在当前任务授权、且 Practice 已明确输入和预期输出时显式运行。Lorelum 不会在 install、validate、query、list、get、index 或 recovery 期间自动运行 Pack script。
 

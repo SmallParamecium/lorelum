@@ -17,6 +17,10 @@ import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry";
 import { CliError, frameworkErrorCodes } from "../runtime/errors";
 import { resolveInvocationStorageRoot } from "../store/storage-root";
+import {
+  backendProjectTargetOptions,
+  resolveProjectInvocationOptions,
+} from "../project-context/service";
 
 export interface IndexCommandServices {
   /** Read-only status keeps its existing non-starting Backend path. */
@@ -31,9 +35,12 @@ const indexStatusResultSchema: JsonSchema = {
   additionalProperties: false,
   required: ["state", "profileId"],
   properties: {
-    state: { enum: ["missing", "ready", "stale", "incompatible"] },
+    state: { enum: ["missing", "indexing", "ready", "stale", "incompatible"] },
     profileId: { type: "string" },
     vectorCount: { type: "integer" },
+    operationId: { type: "string" },
+    indexedPracticeCount: { type: "integer" },
+    totalPracticeCount: { type: "integer" },
   },
 };
 
@@ -53,7 +60,12 @@ const indexOperationResultSchema: JsonSchema = {
       type: "object",
       additionalProperties: false,
       required: ["operationId", "state"],
-      properties: { operationId: { type: "string" }, state: { const: "building" } },
+      properties: {
+        operationId: { type: "string" },
+        state: { enum: ["waiting-for-source", "queued", "building"] },
+        indexedPracticeCount: { type: "integer" },
+        totalPracticeCount: { type: "integer" },
+      },
     },
     {
       type: "object",
@@ -72,7 +84,16 @@ function toStatus(value: IndexStatus): JsonValue {
   return {
     state: value.state,
     profileId: value.profileId,
-    ...(value.vectorCount === undefined ? {} : { vectorCount: value.vectorCount }),
+    ...("vectorCount" in value && value.vectorCount !== undefined
+      ? { vectorCount: value.vectorCount }
+      : {}),
+    ...("operationId" in value ? { operationId: value.operationId } : {}),
+    ...("indexedPracticeCount" in value && value.indexedPracticeCount !== undefined
+      ? { indexedPracticeCount: value.indexedPracticeCount }
+      : {}),
+    ...("totalPracticeCount" in value && value.totalPracticeCount !== undefined
+      ? { totalPracticeCount: value.totalPracticeCount }
+      : {}),
   };
 }
 
@@ -84,7 +105,22 @@ function toOperation(value: IndexOperation): JsonValue {
       preparationId: value.preparationId,
     };
   }
-  if (value.state === "building") return { operationId: value.operationId, state: value.state };
+  if (
+    value.state === "waiting-for-source" ||
+    value.state === "queued" ||
+    value.state === "building"
+  ) {
+    return {
+      operationId: value.operationId,
+      state: value.state,
+      ...(value.indexedPracticeCount === undefined
+        ? {}
+        : { indexedPracticeCount: value.indexedPracticeCount }),
+      ...(value.totalPracticeCount === undefined
+        ? {}
+        : { totalPracticeCount: value.totalPracticeCount }),
+    };
+  }
   if (value.state === "failed") {
     if (embeddingErrorCodes.includes(value.error as (typeof embeddingErrorCodes)[number])) {
       throw new EmbeddingError(value.error as (typeof embeddingErrorCodes)[number]);
@@ -129,9 +165,14 @@ function command(
           invocation.options.storeRoot,
           services.storageRoot,
         );
+        const projectOptions = resolveProjectInvocationOptions(invocation.options);
+        const indexOptions = isOperation ? undefined : backendProjectTargetOptions(projectOptions);
         if (isStatus || isOperation) {
           const client = await services.createClient();
-          if (isStatus) return { data: toStatus(await client.indexStatus(root)) };
+          if (isStatus)
+            return {
+              data: toStatus(await client.indexStatus(root, indexOptions)),
+            };
           const operationId = invocation.positionals[0];
           if (operationId === undefined) throw new BackendError("backend.invalid-request");
           return { data: toOperation(await client.indexOperation(operationId)) };
@@ -139,7 +180,9 @@ function command(
         const client = await services.createRuntimeClient();
         return {
           data: toOperation(
-            name === "build" ? await client.build(root) : await client.rebuild(root),
+            name === "build"
+              ? await client.build(root, indexOptions)
+              : await client.rebuild(root, indexOptions),
           ),
         };
       } catch (error) {
@@ -170,9 +213,9 @@ function storeCliError(code: (typeof indexOperationStoreErrorCodes)[number]): Cl
 
 export function createIndexCommands(services: IndexCommandServices): readonly CommandDefinition[] {
   return Object.freeze([
-    command("status", "Report the selected Store's semantic index status.", services),
-    command("build", "Build a semantic index for the selected Store.", services),
-    command("rebuild", "Replace the selected Store's semantic index.", services),
+    command("status", "Report the selected query context's semantic index status.", services),
+    command("build", "Build a semantic index for the selected query context.", services),
+    command("rebuild", "Replace the selected query context's semantic index.", services),
     command("operation", "Report a semantic index operation.", services),
   ]);
 }

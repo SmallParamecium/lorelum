@@ -34,6 +34,7 @@ docs/adr/
 ├── 0013-incremental-local-store-projection-writes.md # affected-ID canonical projection writes (#73)
 ├── 0014-list-catalog-contract.md                # LocalStore-backed Pack catalog
 ├── 0015-pack-native-resources-and-locators.md   # Pack-native resources and verified local locators
+├── 0016-public-pack-current-locator.md           # readable current Pack roots over sealed artifacts
 └── 0000-template.md                           # copy this to start a new ADR
 ```
 

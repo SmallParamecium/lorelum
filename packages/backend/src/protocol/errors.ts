@@ -4,6 +4,8 @@ export const backendErrorCodes = [
   "backend.unavailable",
   "backend.port-conflict",
   "backend.incompatible",
+  "backend.build-mismatch",
+  "backend.protocol-mismatch",
   "backend.unauthorized",
   "backend.invalid-request",
   "backend.operation-expired",
@@ -15,10 +17,19 @@ export const backendErrorCodes = [
 ] as const;
 export type BackendErrorCode = (typeof backendErrorCodes)[number];
 
+export interface BackendCompatibilityRecovery {
+  readonly action: "backend.stop-if-idle";
+  readonly automation: "auto" | "defer";
+  readonly reason: "idle" | "active-long-task" | "unknown-activity";
+  readonly retry: "original-command";
+}
+
 const messages: Record<BackendErrorCode, string> = {
   "backend.unavailable": "The local backend is not running.",
   "backend.port-conflict": "The local backend address is occupied by an unverified service.",
   "backend.incompatible": "The backend does not match this client build or protocol.",
+  "backend.build-mismatch": "A different Lorelum build owns the local backend.",
+  "backend.protocol-mismatch": "The local backend uses an incompatible Lorelum protocol.",
   "backend.unauthorized": "The local backend could not authenticate this request.",
   "backend.invalid-request": "The backend request is invalid.",
   "backend.operation-expired":
@@ -33,6 +44,7 @@ export class BackendError extends Error {
   constructor(
     readonly code: BackendErrorCode,
     options?: ErrorOptions,
+    readonly recovery?: BackendCompatibilityRecovery,
   ) {
     super(messages[code], options);
     this.name = "BackendError";

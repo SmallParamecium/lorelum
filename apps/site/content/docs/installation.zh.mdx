@@ -13,18 +13,18 @@ Public alpha 提供 macOS Apple Silicon、Linux x64 和 Windows x64 的预编译
 ### macOS Apple Silicon 和 Linux x64
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.2
 ```
 
 ### Windows x64
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.2
 ```
 
 Windows 不要运行 `install.sh`，也不要双击安装脚本。Windows 安装器仅通过 PowerShell 运行，并创建 `lore.cmd` shim；请在已经打开的 PowerShell 会话中运行，保留错误输出。
 
-这会安装 `0.1.0-alpha.1`。省略版本参数时，两种安装器都会查找稳定发行版。
+这会安装 `0.1.0-alpha.2`。省略版本参数时，两种安装器都会查找稳定发行版。
 
 两种安装器都会下载当前宿主对应的发行包和 `SHA256SUMS`，并校验发行包的 SHA-256。macOS 和 Linux 将完整文件安装到 `~/.local/share/lorelum/versions/`，命令入口位于 `~/.local/bin/lore`；Windows 安装到 `$env:LOCALAPPDATA\Lorelum\versions\`，并创建 `$env:LOCALAPPDATA\Lorelum\bin\lore.cmd`。
 
@@ -58,12 +58,14 @@ lore --version
 
 ## 更新
 
-阅读目标版本的兼容性说明，再使用对应版本重新运行安装器。停止正在运行的本地 Backend，使后续请求使用新安装：
+阅读目标版本的兼容性说明，再使用对应版本重新运行安装器。对于由 Lorelum 安装器管理的现有安装，安装器会在激活不同版本的 CLI 前安全停止正在运行的 Backend；正常升级不需要另外手动 stop。
+
+如果安装器无法确认 Backend 已停止，它会保留原来的命令入口，并明确说明新版本没有被激活。这样不会把用户留在“新 CLI 已安装、却立即连接到不兼容旧 Backend”的状态。请用原 release 处理所报告的本地问题、执行 stop，再重新运行安装器：
 
 ```sh
 lore backend stop
 ```
 
-下一次 semantic 命令会重新启动服务。如果 Agent 仍使用旧的 CLI 环境，也需要重启 Agent 应用。
+手工替换发行包不具备这段自动交接逻辑；替换手工管理的可执行文件前，请先停止 Backend。下一次 semantic 命令会重新启动服务。如果 Agent 仍使用旧的 CLI 环境，也需要重启 Agent 应用。
 
 CLI、Pack 和 Plugin 的版本分别管理。Pack 更新见 [Pack 命令](./reference/packs)，Plugin 更新见 [Codex 集成](./codex)。已有 Store 跨版本使用前，请阅读 [Alpha 兼容性](./alpha)。

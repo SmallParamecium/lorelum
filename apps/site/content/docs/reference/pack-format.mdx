@@ -59,9 +59,9 @@ Passing validation establishes format correctness only. Review the guidance, tes
 
 ## How callers consume resources
 
-After `lore get <practice-id>`, each returned source includes `packName`, `sourcePath`, and the current local `packRoot`. Resolve a `resource:` path from the matching source root. A caller that explicitly selected one Pack can obtain the same kind of locator from `lore pack list <pack-name>`. See the [get reference](./get) and [Pack commands](./packs) for locator lifetime and multi-source behavior.
+After `lore get <practice-id>`, each returned source includes `packName`, `sourcePath`, and the current local `packRoot`. That root is a readable `current` view, not an artifact-digest directory. Resolve a `resource:` path from the matching source root. A caller that explicitly selected one Pack can obtain the same kind of locator from `lore pack list <pack-name>` or a successful install/update. See the [get reference](./get) and [Pack commands](./packs) for locator lifetime and multi-source behavior.
 
-This is a routing convention, not an access-control system. `resource:` recommends the material that fits the Practice; it does not restrict normal browsing of a Pack root that the caller explicitly selected. Do not derive Pack paths from a name or Store internals. If an update makes a previously returned root unavailable, run `lore get` or `lore pack list` again.
+This is a routing convention, not an access-control system. `resource:` recommends the material that fits the Practice; it does not restrict normal browsing of a Pack root that the caller explicitly selected. Do not derive Pack paths from a name or Store internals. A later mutation can make an existing `current` path resolve to new bytes or disappear; run `lore get` or `lore pack list` again before using it as the current source.
 
 Read references only when needed. Copy assets to the target workspace before editing. Run scripts only with the current task's authorization and with explicit inputs and expected output described by the Practice. Lorelum never auto-runs Pack scripts during install, validation, query, listing, get, indexing, or recovery.
 

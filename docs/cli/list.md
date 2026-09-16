@@ -28,7 +28,7 @@ data: {
 }
 ```
 
-Pack entries are sorted by `name`. `version` comes from the selected Store's verified active manifest. `practiceCount` counts effective Practices for which that Pack has a source claim. If multiple Packs provide the same Practice, each Pack counts it; the values therefore are not a global deduplicated Practice total. `packRoot` is the selected Pack's current local, verified artifact root. It supports an explicit Pack-level browse or authoring task; it does not cause the CLI to load resource files or Practice bodies into the catalog result.
+Pack entries are sorted by `name`. `version` comes from the selected Store's verified active manifest. `practiceCount` counts effective Practices for which that Pack has a source claim. If multiple Packs provide the same Practice, each Pack counts it; the values therefore are not a global deduplicated Practice total. `packRoot` is the selected Pack's readable local `current` view, not an internal digest artifact directory. It supports an explicit Pack-level browse or authoring task; it does not cause the CLI to load resource files or Practice bodies into the catalog result.
 
 A fresh Store is a successful response with `packs: []`.
 
@@ -71,7 +71,7 @@ data: {
 
 Practice entries are sorted by exact `id`. The returned `id` can be passed directly to `lore get`. Full Practice bodies, anti-patterns, and source details remain part of `get`; compact summaries do not repeat `practicePath` or individual resource paths. An installed Pack with zero Practices is successful and returns an empty `practices` array.
 
-`packRoot` is an absolute locator for the active artifact at the Store snapshot used by this command. A caller can browse this explicitly selected Pack root, or resolve a Practice resource target such as `resource:references/checklist.md` from it. It must not guess a root from a Pack name or depend on SQLite/projection layout. After install, update, remove, or recovery changes the Pack state, an earlier root can be stale; rerun the relevant `lore pack list` command or `lore get` to obtain a current locator.
+`packRoot` is an absolute `current` locator for the Pack active at this command's Store snapshot. A caller can browse this explicitly selected Pack root, or resolve a Practice resource target such as `resource:references/checklist.md` from it. It must not guess a root from a Pack name or depend on SQLite/projection layout. After install, update, remove, or recovery changes the Pack state, the same path can resolve to newer bytes or disappear; rerun the relevant `lore pack list` command or `lore get` before treating it as the current source.
 
 ## Output format
 

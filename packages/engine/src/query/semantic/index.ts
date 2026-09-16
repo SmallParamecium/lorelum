@@ -9,6 +9,7 @@ export {
 } from "./errors";
 export { createSemanticIndexService } from "./index/service";
 export { createSemanticQueryService } from "./query-service";
+export { assembleSemanticArtifactResult, searchSemanticArtifact } from "./read";
 export { SEMANTIC_INDEX_VERSION } from "./index/metadata";
 export type { EmbeddingBatch, EmbeddingPort, EncodingContract } from "./encoding";
 export type { EmbeddingProfile } from "./profile";

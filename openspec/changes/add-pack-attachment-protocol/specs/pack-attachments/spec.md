@@ -43,9 +43,9 @@ lore validate MUST NOT 执行 script、安装依赖、联网、读取凭据、�
 
 ### Requirement: Pack locators from lore get and lore pack list
 
-lore get <practice-id> SHALL 在每个返回 source 中提供 packRoot，连同既有 packName 和 sourcePath。lore pack list 与 lore pack list --details SHALL 在每个 Pack entry 中提供 packRoot；lore pack list <pack> SHALL 在其 pack object 中提供 packRoot。每个 packRoot MUST 是相应 Pack 在 selected LocalStore 当前 active sealed artifact 的本机绝对根目录，并且 MUST 与该 command 返回的已验证 Store snapshot 一致。
+lore get <practice-id> SHALL 在每个返回 source 中提供 packRoot，连同既有 packName 和 sourcePath。lore pack list 与 lore pack list --details SHALL 在每个 Pack entry 中提供 packRoot；lore pack list <pack> SHALL 在其 pack object 中提供 packRoot。每个 packRoot MUST 是相应 Pack 在 selected LocalStore 的绝对 `packs/p-<pack-name>/current` public view，MUST 在 command 返回时解析到该 command 已验证的 active sealed artifact，且 MUST NOT 暴露 artifact digest 目录。
 
-query MUST NOT 返回 packRoot、资源文件清单或资源路径。SessionStart Hook Catalog MUST 在每个已安装 Pack 条目返回 packRoot；它 MUST NOT 返回 resource 文件清单、resource 内容或 Practice 的绝对路径。pack list 的 Practice summaries MUST NOT 增加 practicePath 或 resource paths。resource: target SHALL 表达 Practice 推荐的资源与使用时机，而不是调用方的文件访问 allowlist；调用方可以正常浏览由 Catalog、lore get 或 lore pack list 返回的 packRoot。调用方不应依赖从 Pack name 推导 artifact path、SQLite 或 projection 作为公开读取合同。
+query MUST NOT 返回 packRoot、资源文件清单或资源路径。SessionStart Hook Catalog MUST 在每个已安装 Pack 条目返回 packRoot；它 MUST NOT 返回 resource 文件清单、resource 内容或 Practice 的绝对路径。pack list 的 Practice summaries MUST NOT 增加 practicePath 或 resource paths。resource: target SHALL 表达 Practice 推荐的资源与使用时机，而不是调用方的文件访问 allowlist；调用方可以正常浏览由 Catalog、lore get 或 lore pack list 返回的 packRoot。调用方不得从 Pack name 推导 internal artifact path、SQLite 或 projection；公开 current path 是唯一的本机目录合同。
 
 #### Scenario: Reading a resource after selecting one Practice
 
@@ -60,17 +60,22 @@ query MUST NOT 返回 packRoot、资源文件清单或资源路径。SessionStar
 #### Scenario: Discovering installed Pack roots at SessionStart
 
 - **WHEN** Codex SessionStart Hook 注入当前已安装 Pack Catalog
-- **THEN** 每个 Pack 条目 MUST 提供其 active sealed artifact 的 packRoot，且 Catalog MUST NOT 注入该 Pack 的 resource 文件清单、resource 内容或 Practice body
+- **THEN** 每个 Pack 条目 MUST 提供其可直接读取的 current packRoot，且 Catalog MUST NOT 注入该 Pack 的 resource 文件清单、resource 内容或 Practice body
 
 #### Scenario: A Practice has multiple Pack sources
 
 - **WHEN** lore get 返回同一 Practice 的多个 active sources
 - **THEN** 每个 source MUST 返回自己的 packRoot，且 CLI MUST NOT 默认选择某一个 source 或把多个 Pack 的 resources 合并为一个目录
 
-#### Scenario: A resource locator has become stale
+#### Scenario: A Pack mutation advances a current view
 
-- **WHEN** 调用方在随后的 Pack mutation 后无法读取先前 packRoot 下的资源
-- **THEN** 调用方 MUST 重新执行 lore get 或 lore pack list 获取当前 locator，且不得猜测新的 artifact path 或静默使用另一个 source
+- **WHEN** 调用方取得 packRoot 后，该 Pack 完成 install、update、remove 或 recovery mutation
+- **THEN** 原有 current path MAY 随 active Pack 切换为新的 bytes 或在 Pack remove 后不再存在；调用方若需要按新的 Practice/source 解释 resource target MUST 重新执行 lore get 或 lore pack list，且不得将 current view 当作历史 artifact pin
+
+#### Scenario: A legacy Store lacks a current view
+
+- **WHEN** selected LocalStore 的 active manifest 与 sealed artifacts 有效，但它由不创建 current view 的旧客户端写入
+- **THEN** 首次需要返回 packRoot 的 Store read MUST 在不改变 generation、effectiveRevision 或 retrieval index 的情况下修复 current view，并返回可读取的 public path
 
 ### Requirement: Resources are on-demand materials, not executable authority
 
@@ -90,7 +95,7 @@ resource: target 位于 Practice Markdown body 内，因此新增、删除或修
 #### Scenario: A resource file changes without changing the Practice
 
 - **WHEN** 新 release 只修改 references/api-compatibility.md 的 bytes，而关联 Practice 的 canonical content 不变
-- **THEN** 后续 lore get MUST 指向含新资源 bytes 的 active Pack artifact，且该 Practice 的 contentDigest 与 retrieval revision MUST 保持不变
+- **THEN** 后续 lore get MUST 返回解析到含新资源 bytes 的 current packRoot，且该 Practice 的 contentDigest 与 retrieval revision MUST 保持不变
 
 #### Scenario: A Practice changes its resource target
 

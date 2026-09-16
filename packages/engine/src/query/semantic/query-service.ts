@@ -6,17 +6,18 @@ import {
   type StoreSnapshotIdentity,
 } from "../../local-store";
 import { revisionDeltaPracticeIds, type RevisionDelta } from "../../local-store/model";
-import { parseQueryRequest } from "../request";
-import { assembleQueryHits } from "../result";
 import type { QueryHit, QueryRequest } from "../types";
-import { validateEmbeddingBatch, type EmbeddingPort } from "./encoding";
+import type { EmbeddingPort } from "./encoding";
+import { SemanticIndexIncompatibleError, SemanticIndexNotReadyError } from "./errors";
 import {
-  SemanticIndexIncompatibleError,
-  SemanticIndexNotReadyError,
-  SemanticIndexQueryError,
-} from "./errors";
-import { openSemanticIndexReader, type SemanticCandidate } from "./index/reader";
+  openSemanticIndexReader,
+  openSemanticIndexReaderAt,
+  type SemanticCandidate,
+} from "./index/reader";
+import type { SemanticIndexPaths } from "./index/paths";
+import type { SemanticIndexDatabaseDefinition } from "./index/database";
 import type { EmbeddingProfile } from "./profile";
+import { assembleSemanticArtifactResult, searchSemanticArtifact } from "./read";
 
 const MAX_QUERY_RETRIES = 3;
 
@@ -52,6 +53,8 @@ export interface SemanticQueryDependencies {
   };
   readonly profile: EmbeddingProfile;
   readonly embedding: EmbeddingPort;
+  readonly paths?: (root: StorageRoot, profileId: string) => SemanticIndexPaths;
+  readonly definition?: SemanticIndexDatabaseDefinition;
 }
 
 interface QueryCoverage {
@@ -148,30 +151,36 @@ export function createSemanticQueryService(
   dependencies: SemanticQueryDependencies,
 ): SemanticQueryService {
   const { store, profile, embedding } = dependencies;
+  const pathsFor = dependencies.paths;
+  const definition = dependencies.definition;
 
   return Object.freeze({
     async query(root: StorageRoot, request: QueryRequest): Promise<SemanticQueryResult> {
-      const input = parseQueryRequest(request);
       for (let attempt = 0; attempt < MAX_QUERY_RETRIES; attempt += 1) {
         let reader: Awaited<ReturnType<typeof openSemanticIndexReader>> | undefined;
         try {
           // eslint-disable-next-line no-await-in-loop -- each retry reopens the active snapshot.
-          reader = await openSemanticIndexReader(root.rootPath, profile);
+          reader =
+            pathsFor === undefined
+              ? await openSemanticIndexReader(root.rootPath, profile)
+              : await openSemanticIndexReaderAt(
+                  pathsFor(root, profile.profileId),
+                  profile,
+                  definition,
+                );
           // eslint-disable-next-line no-await-in-loop -- coverage is bound to this retry's Store view.
           const current = await store.readSnapshotIdentity(root);
           // eslint-disable-next-line no-await-in-loop -- delta history is part of the same retry.
           const coverage = await prepareCoverage(store, root, reader.metadata, current);
 
-          let candidates: readonly SemanticCandidate[] = Object.freeze([]);
-          if (reader.hasEligibleVectors(coverage.excludedPracticeIds)) {
-            // eslint-disable-next-line no-await-in-loop -- the model admits one request at a time.
-            const batch = await embedding.embed([input.text]);
-            const [queryVector] = validateEmbeddingBatch(profile, [input.text], batch);
-            if (queryVector === undefined) {
-              throw new SemanticIndexQueryError("Embedding result did not contain a query vector");
-            }
-            candidates = reader.search(queryVector, coverage.excludedPracticeIds, input.limit);
-          }
+          // eslint-disable-next-line no-await-in-loop -- the model admits one request at a time.
+          const candidates = await searchSemanticArtifact({
+            reader,
+            profile,
+            embedding,
+            request,
+            excludedPracticeIds: coverage.excludedPracticeIds,
+          });
 
           const ids = semanticCandidateIds(candidates);
           // eslint-disable-next-line no-await-in-loop -- final read validates this retry's snapshot.
@@ -180,16 +189,11 @@ export function createSemanticQueryService(
             coverage.identity,
             ids,
           );
-          const results = assembleQueryHits(
+          return assembleSemanticArtifactResult({
+            profile,
+            coverage: coverage.coverage,
             practices,
             candidates,
-            (message) => new SemanticIndexQueryError(message),
-          );
-          return Object.freeze({
-            mode: "semantic",
-            profileId: profile.profileId,
-            coverage: coverage.coverage,
-            results,
           });
         } catch (error) {
           if (error instanceof StoreSnapshotChangedError) {

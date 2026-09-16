@@ -19,7 +19,7 @@
 }
 ```
 
-客户端必须用 runtime secret 重算 proof，并检查 instance、build 和 protocolVersion。身份不匹配时不得继续请求。
+客户端必须用 runtime secret 重算 proof，并检查 instance、record 中的 build 和 protocolVersion。普通 control/business 请求还必须要求 remote build 与当前 CLI build 相同；`backend stop` 可接受当前 CLI build 不同，但仍必须通过 record identity、proof 和 protocol 校验。任一身份校验不匹配时不得继续请求。
 
 ## Status
 

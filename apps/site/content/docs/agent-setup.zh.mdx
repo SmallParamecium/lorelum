@@ -19,7 +19,7 @@ Lorelum Skill 指导 Agent 判断何时需要工程指引、如何描述任务�
 
 ## Codex
 
-安装 [Codex Plugin](./codex)。它提供 Skill，并在受支持的会话事件中让 Agent 发现已安装 Pack 及其当前 `packRoot`。Catalog 不注入 Practice 正文或资源内容。Plugin 使用现有 CLI 和 Store，二者需要单独安装和准备。
+安装 [Codex Plugin](./codex)。它提供 Skill，并在受支持的会话事件中让 Agent 发现已安装 Pack 及其可直接读取的当前 `packRoot`。Catalog 不注入 Practice 正文或资源内容。Plugin 使用现有 CLI 和 Store，二者需要单独安装和准备。
 
 ## Claude Code
 
@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/skills/lorelum
 
 能够执行命令的 Agent 可以调用同一套 CLI。按宿主支持的方式安装 Skill；若宿主使用项目指令，则将 Skill 的检索指导放入对应指令文件。
 
-核心行为是：在 `lore query` 中描述任务和当前判断，用 `lore get` 读取相关结果，再按适用条件应用指导。取回的 Practice 包含 `resource:` link 时，已安装 Skill 会说明如何用返回的 `packRoot` 解析它、按需读取 reference、复制 asset 后编辑，以及只在当前任务授权下显式运行 script。完整执行约定见 [Agent 使用说明](./agents)。
+核心行为是：在 `lore query` 中描述任务和当前判断，用 `lore get` 读取相关结果，再按适用条件应用指导。取回的 Practice 包含 `resource:` link 时，已安装 Skill 会说明如何用返回的可变 current `packRoot` 解析它、按需读取 reference、复制 asset 后编辑，以及只在当前任务授权下显式运行 script。完整执行约定见 [Agent 使用说明](./agents)。
 
 ## 验证接入
 

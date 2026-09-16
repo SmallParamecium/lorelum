@@ -1,5 +1,6 @@
 /* eslint-disable no-await-in-loop -- Native single-slot encoding is intentionally sequential. */
 import { DEFAULT_EMBEDDING_SETTINGS } from "../../config/embedding";
+import { createTimeoutSignal } from "../../lifecycle/timeout";
 import { randomUUID } from "node:crypto";
 import { waitForSettlement } from "../../lifecycle/deadline";
 import type { BackendSettings } from "../../config/model";
@@ -28,6 +29,8 @@ export interface EmbeddingServiceOptions {
   ) => Promise<string>;
   readonly threads?: number;
   readonly settings: BackendSettings;
+  /** Publishes durable Backend activity before a preparation can begin. */
+  readonly onPreparationActivityChange?: (active: boolean) => Promise<void>;
 }
 export function createEmbeddingService(options: EmbeddingServiceOptions) {
   const threads = options.threads ?? DEFAULT_EMBEDDING_SETTINGS.threads;
@@ -84,7 +87,12 @@ export function createEmbeddingService(options: EmbeddingServiceOptions) {
     const signal = startup.signal;
     loading = Promise.resolve().then(async () => {
       let handle: EmbeddingRuntime | undefined;
+      let activityPublished = false;
       try {
+        if (options.onPreparationActivityChange !== undefined) {
+          await options.onPreparationActivityChange(true);
+          activityPublished = true;
+        }
         signal.throwIfAborted();
         const modelPath = await options.prepareModel?.(signal, (value) => {
           if (state === "loading" && !signal.aborted) progress = value;
@@ -116,6 +124,13 @@ export function createEmbeddingService(options: EmbeddingServiceOptions) {
         );
       } finally {
         loading = undefined;
+        if (activityPublished) {
+          try {
+            await options.onPreparationActivityChange?.(false);
+          } catch {
+            // A failed clear remains conservative: activity inspection will defer recovery.
+          }
+        }
       }
     });
     return loading;
@@ -161,7 +176,8 @@ export function createEmbeddingService(options: EmbeddingServiceOptions) {
       throw new EmbeddingError("embedding.busy");
     if (state !== "ready" || !runtime) throw new EmbeddingError("embedding.not-loaded");
     const handle = runtime;
-    const signal = AbortSignal.timeout(options.settings.requestTimeoutMs);
+    const timeout = createTimeoutSignal(options.settings.requestTimeoutMs);
+    const signal = timeout.signal;
     const work = async () => {
       try {
         const vectors: number[][] = [];
@@ -181,6 +197,7 @@ export function createEmbeddingService(options: EmbeddingServiceOptions) {
       return await inflight;
     } finally {
       inflight = undefined;
+      timeout.dispose();
     }
   }
   function beginLoad(): ModelStatus {

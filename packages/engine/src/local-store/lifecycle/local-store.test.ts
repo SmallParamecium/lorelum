@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -112,6 +112,8 @@ test("fresh store open + install + reopen round-trips state", async () => {
     expect(installed.effectiveRevision).toBe(1);
     expect(installed.delta.added).toEqual(["platform.api", "platform.auth"]);
     expect(installed.cleanupPending).toBe(false);
+    expect(installed.packRoot).toBe(join(root.rootPath, "packs", "p-platform", "current"));
+    await expect(access(installed.packRoot)).resolves.toBeNull();
 
     const reopened = await store.open(root);
     expect(reopened.generation).toBe(1);
@@ -119,7 +121,7 @@ test("fresh store open + install + reopen round-trips state", async () => {
       {
         name: "platform",
         version: "1.0.0",
-        packRoot: expect.stringContaining("/packs/p-platform/"),
+        packRoot: join(root.rootPath, "packs", "p-platform", "current"),
       },
     ]);
     expect(reopened.effectivePractices.map((p) => p.practiceId)).toEqual([
@@ -141,9 +143,9 @@ test("open exposes verified installed Pack locators in manifest order", async ()
       {
         name: "platform",
         version: "1.0.0",
-        packRoot: expect.stringContaining("/packs/p-platform/"),
+        packRoot: join(root.rootPath, "packs", "p-platform", "current"),
       },
-      { name: "web", version: "1.0.0", packRoot: expect.stringContaining("/packs/p-web/") },
+      { name: "web", version: "1.0.0", packRoot: join(root.rootPath, "packs", "p-web", "current") },
     ]);
     expect(Object.isFrozen(opened.packs)).toBe(true);
     expect(Object.isFrozen(opened.packs[0])).toBe(true);
@@ -170,11 +172,15 @@ test("readInstalledPackDetails returns verified Pack metadata without widening o
         {
           name: "platform",
           version: "1.0.0",
-          packRoot: expect.stringContaining("/packs/p-platform/"),
+          packRoot: join(root.rootPath, "packs", "p-platform", "current"),
           description: "Platform engineering guidance.",
           applies_to: ["typescript", "bun"],
         },
-        { name: "web", version: "1.0.0", packRoot: expect.stringContaining("/packs/p-web/") },
+        {
+          name: "web",
+          version: "1.0.0",
+          packRoot: join(root.rootPath, "packs", "p-web", "current"),
+        },
       ],
     });
     expect(Object.isFrozen(details)).toBe(true);
@@ -186,9 +192,9 @@ test("readInstalledPackDetails returns verified Pack metadata without widening o
       {
         name: "platform",
         version: "1.0.0",
-        packRoot: expect.stringContaining("/packs/p-platform/"),
+        packRoot: join(root.rootPath, "packs", "p-platform", "current"),
       },
-      { name: "web", version: "1.0.0", packRoot: expect.stringContaining("/packs/p-web/") },
+      { name: "web", version: "1.0.0", packRoot: join(root.rootPath, "packs", "p-web", "current") },
     ]);
   });
 });
@@ -237,11 +243,14 @@ test("first install creates a missing storage root before acquiring its lock", a
 test("install is idempotent for the same artifact digest", async () => {
   await withRoot(async (root) => {
     const store = createLocalStore();
-    await store.install(root, candidate("platform", platform));
+    const first = await store.install(root, candidate("platform", platform));
+    await unlink(first.packRoot);
     const again = await store.install(root, candidate("platform", platform));
     expect(again.idempotent).toBe(true);
     expect(again.generation).toBe(1); // no state change
     expect(again.effectiveRevision).toBe(1);
+    expect(again.packRoot).toBe(first.packRoot);
+    await expect(access(again.packRoot)).resolves.toBeNull();
   });
 });
 
@@ -318,6 +327,7 @@ test("a resource-only upgrade replaces the artifact without advancing retrieval 
     );
 
     expect(upgraded.artifactDigest).not.toBe(first.artifactDigest);
+    expect(upgraded.packRoot).toBe(first.packRoot);
     expect(upgraded.generation).toBe(first.generation + 1);
     expect(upgraded.effectiveRevision).toBe(first.effectiveRevision);
     expect(upgraded.delta).toEqual({ added: [], changed: [], invalidated: [] });
@@ -325,13 +335,36 @@ test("a resource-only upgrade replaces the artifact without advancing retrieval 
       practices["platform.api"],
     );
 
-    const entry = (await readManifest(root.rootPath)).packs[0]!;
-    const resourcePath = join(
-      artifactPath(root.rootPath, entry.storageKey, entry.artifactDigest),
-      "references",
-      "api-compatibility.md",
-    );
+    const resourcePath = join(upgraded.packRoot, "references", "api-compatibility.md");
     expect(await readFile(resourcePath, "utf8")).toBe("v2 compatibility\n");
+  });
+});
+
+test("locator reads repair an old Store that lacks current without changing its tuple", async () => {
+  await withRoot(async (root) => {
+    const store = createLocalStore();
+    const installed = await store.install(root, candidate("platform", platform));
+    await unlink(installed.packRoot);
+
+    const recovered = await store.open(root);
+    expect(recovered.generation).toBe(installed.generation);
+    expect(recovered.effectiveRevision).toBe(installed.effectiveRevision);
+    expect(recovered.packs[0]?.packRoot).toBe(installed.packRoot);
+    await expect(access(installed.packRoot)).resolves.toBeNull();
+  });
+});
+
+test("locator repair never removes an unknown current directory", async () => {
+  await withRoot(async (root) => {
+    const store = createLocalStore();
+    const installed = await store.install(root, candidate("platform", platform));
+    await unlink(installed.packRoot);
+    await mkdir(installed.packRoot);
+    const marker = join(installed.packRoot, "keep.txt");
+    await writeFile(marker, "do not remove\n", "utf8");
+
+    await expect(store.open(root)).rejects.toBeInstanceOf(StoreRecoveryRequiredError);
+    expect(await readFile(marker, "utf8")).toBe("do not remove\n");
   });
 });
 
@@ -437,7 +470,7 @@ test("a source-only addition does not advance effectiveRevision (定稿 §9 #6)"
           .get("platform.api"),
       ).toEqual({ effective_revision: first.effectiveRevision });
     } finally {
-      database.close();
+      database.close(true);
     }
 
     const practices = await store.readEffectivePractices(root);
@@ -464,7 +497,7 @@ test("normal mutation rejects Active Pack rows that disagree with the manifest",
     try {
       database.query("UPDATE active_packs SET pack_version = 'tampered'").run();
     } finally {
-      database.close();
+      database.close(true);
     }
 
     await expect(
@@ -491,10 +524,11 @@ test("uninstall keeps a practice still provided by another pack", async () => {
 test("uninstall of the last source deletes the Effective Practice", async () => {
   await withRoot(async (root) => {
     const store = createLocalStore();
-    await store.install(root, candidate("platform", platform));
+    const installed = await store.install(root, candidate("platform", platform));
     const removed = await store.uninstall(root, "platform");
     expect(removed.delta.invalidated).toEqual(["platform.api", "platform.auth"]);
     expect(await store.readEffectivePractices(root)).toEqual([]);
+    await expect(access(installed.packRoot)).rejects.toThrow();
   });
 });
 
@@ -593,7 +627,7 @@ test("counter exhaustion rejects before writing a journal or changing state", as
     database
       .query("UPDATE local_store_metadata SET installed_packs_generation = ?")
       .run(Number.MAX_SAFE_INTEGER);
-    database.close();
+    database.close(true);
 
     await expect(
       store.install(root, candidate("web", { "web.css": "Use CSS.\n" })),

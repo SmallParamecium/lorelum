@@ -2,13 +2,7 @@ import { prepareModel } from "../models/prepare";
 import { createEmbeddingService } from "../modules/embedding/service";
 import { createEmbeddingProcess } from "./embedding-process";
 import { consumeDaemonLaunch, resolveBackendSettings, resolveEmbeddingConfig } from "../config";
-import {
-  createEmbeddingProfile,
-  createLocalStore,
-  createQueryService,
-  createSemanticQueryService,
-  createSemanticIndexService,
-} from "@lorelum/engine";
+import { createEmbeddingProfile, createLocalStore, createQueryService } from "@lorelum/engine";
 import { BACKEND_HOST, MAX_BODY_BYTES } from "../protocol/constants";
 import { BackendError } from "../protocol/errors";
 import { createBackendApp } from "../app";
@@ -17,8 +11,10 @@ import {
   createEmbeddingAdapter,
   createQueryEmbeddingAdapter,
 } from "../modules/index/embedding-adapter";
-import { createIndexOperationService } from "../modules/index/operation-service";
+import { ContentAddressedSemanticRuntime } from "../modules/query/content-addressed-semantic-runtime";
+import { SemanticOperationJournal } from "../modules/query/project-operation-journal";
 import { isSameProcess } from "./process-identity";
+import { removeActivityRecord, setRuntimeActivity, withActivityLock } from "./activity-state";
 import { readRecord, removeRecord, writeRecord } from "./runtime-state";
 import { logEvent } from "./log";
 
@@ -37,9 +33,18 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
   )
     throw new BackendError("backend.unauthorized");
   const settings = resolveBackendSettings(record.settings);
+  const updateActivity = async (
+    kind: "daemon-startup" | "model-preparation" | "index-operation",
+    active: boolean,
+  ): Promise<void> => {
+    await withActivityLock(directory, settings.requestTimeoutMs, () =>
+      setRuntimeActivity(directory, instanceId, kind, active),
+    );
+  };
   const embeddingConfig = resolveEmbeddingConfig(record.embedding);
   const embedding = createEmbeddingService({
     settings,
+    onPreparationActivityChange: (active) => updateActivity("model-preparation", active),
     threads: embeddingConfig.threads,
     prepareModel: (signal, progress) => prepareModel(embeddingConfig, signal, progress),
     createRuntime: (modelPath) =>
@@ -79,24 +84,21 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
     encodingId: model.encodingId,
     dimensions: model.dimensions,
   });
-  const semanticIndex = createSemanticIndexService({
+  const semanticRuntime = new ContentAddressedSemanticRuntime(
     store,
     profile,
-    embedding: createEmbeddingAdapter(embedding),
-  });
-  const semanticQuery = createSemanticQueryService({
-    store,
-    profile,
-    embedding: createQueryEmbeddingAdapter(embedding),
-  });
-  const indexOperations = createIndexOperationService(semanticIndex, embedding);
+    createEmbeddingAdapter(embedding),
+    createQueryEmbeddingAdapter(embedding),
+    embedding,
+    new SemanticOperationJournal(directory),
+    (active) => updateActivity("index-operation", active),
+  );
   const app = createBackendApp({
     backend,
     embedding,
     port,
     keywordQueryService: createQueryService({ store }),
-    semanticQueryService: semanticQuery,
-    indexOperations,
+    semanticRuntime,
   });
   const signalHandler = () => {
     void backend.stop();
@@ -108,17 +110,20 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
     }, settings.shutdownTimeoutMs);
     try {
       try {
-        await indexOperations.waitForIdle(deadline);
+        await semanticRuntime.waitForIdle(deadline);
       } catch (error) {
         // Stop the native runtime, then wait for Engine to clean staging and release its writer lock.
         await embedding.unload(Date.now() + settings.shutdownTimeoutMs).catch(() => {});
-        await indexOperations.waitForIdle();
+        await semanticRuntime.waitForIdle();
         throw error;
       }
       await embedding.unload(deadline);
       await app.stop(false);
       await logEvent(directory, "stopped");
       await removeRecord(directory, instanceId);
+      await withActivityLock(directory, settings.requestTimeoutMs, () =>
+        removeActivityRecord(directory, instanceId),
+      );
     } finally {
       clearTimeout(force);
       if (app.server) await app.stop(true);
@@ -135,11 +140,15 @@ export async function runBackendDaemon(options: { readonly buildIdentity: string
     });
     process.on("SIGTERM", signalHandler);
     process.on("SIGINT", signalHandler);
+    await updateActivity("daemon-startup", false);
     await logEvent(directory, "ready");
     ready = true;
   } catch (error) {
     await embedding.unload().catch(() => {});
     if (app.server) await app.stop(true);
+    await withActivityLock(directory, settings.requestTimeoutMs, () =>
+      removeActivityRecord(directory, instanceId),
+    ).catch(() => undefined);
     await logEvent(directory, "failed", "backend.failed");
     throw new BackendError("backend.failed", { cause: error });
   }

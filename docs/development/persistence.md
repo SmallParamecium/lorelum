@@ -8,13 +8,18 @@ This is an internal development guide. It does not change Pack format, CLI, or B
 
 ## Persistence model
 
-Engine has three independent SQLite database kinds. They use one shared persistence foundation, but remain separate files because their lifecycles differ.
+Engine has Store-local and user-cache SQLite database kinds. They use one shared persistence foundation, but remain separate files because their lifecycles differ.
 
 | Database | Purpose | Schema definition | Migration directory |
 | --- | --- | --- | --- |
 | LocalStore | installed Pack catalog, effective Practices, sources, and revision records | `packages/engine/src/persistence/schemas/local-store.ts` | `packages/engine/src/persistence/migrations/local-store/` |
-| keyword index | FTS5 documents and the index checkpoint | `packages/engine/src/persistence/schemas/keyword-index.ts` | `packages/engine/src/persistence/migrations/keyword-index/` |
-| semantic index | Profile-bound metadata and Practice vectors | `packages/engine/src/persistence/schemas/semantic-index.ts` | `packages/engine/src/persistence/migrations/semantic-index/` |
+| Store keyword index | Store-only FTS5 documents and the index checkpoint | `packages/engine/src/persistence/schemas/keyword-index.ts` | `packages/engine/src/persistence/migrations/keyword-index/` |
+| Store semantic index | Legacy Store-local Profile metadata and Practice vectors | `packages/engine/src/persistence/schemas/semantic-index.ts` | `packages/engine/src/persistence/migrations/semantic-index/` |
+| Content-addressed cache catalog | Artifact inventory without source paths or Practice content | `packages/engine/src/persistence/schemas/project-cache.ts` | `packages/engine/src/persistence/migrations/project-cache/` |
+| Shared vector cache | Reusable Profile/projection vectors | `packages/engine/src/persistence/schemas/semantic-vector-cache.ts` | `packages/engine/src/persistence/migrations/semantic-vector-cache/` |
+| Project keyword artifact | Content-addressed ProjectContext FTS5 artifact | `packages/engine/src/persistence/schemas/keyword-index.ts` | `packages/engine/src/persistence/migrations/project-keyword-index/` |
+| Content-addressed semantic artifact | Complete vector artifact for one Store or ProjectContext target | `packages/engine/src/persistence/schemas/semantic-index.ts` | `packages/engine/src/persistence/migrations/project-semantic-index/` |
+| Semantic progress artifact | Mutable, queryable progress for one Store or ProjectContext target | `packages/engine/src/persistence/schemas/semantic-index.ts` | `packages/engine/src/persistence/migrations/semantic-progress-index/` |
 
 The shared pieces are deliberately centralized:
 
@@ -55,7 +60,7 @@ For a normal table change:
    bun run db:generate
    ```
 
-   It runs the LocalStore, keyword-index, and semantic-index Drizzle configurations in a fixed order. Developers do not invoke three separate generation scripts.
+   It runs every checked-in LocalStore, Store-index, ProjectContext artifact, catalog, and shared-vector Drizzle configuration in a fixed order. Developers do not invoke separate generation scripts.
 
 3. Review the generated SQL and Drizzle `meta/` files. The migration must describe the intended SQLite change; generation is not a substitute for review.
 4. Add or update the owning repository/index tests and the behavior-level tests that exercise the changed data.
@@ -76,18 +81,19 @@ The existing migration files are immutable records of what a database has applie
 At runtime, the matching database adapter calls Drizzle's `migrate()` before it writes or uses a database that requires initialization. Drizzle records applied migration hashes in that SQLite file's `__drizzle_migrations` table and applies only missing checked-in migrations.
 
 - Opening LocalStore uses `openStoreDatabase()` and applies LocalStore migrations before creating the LocalStore repository.
-- Opening or building the persistent keyword index applies keyword-index migrations to the active or staging index file.
-- Building a semantic index applies semantic-index migrations to its staging SQLite file before metadata and vectors are inserted; the validated file is then published atomically.
+- Opening or building the persistent Store-only keyword index applies keyword-index migrations to the active or staging index file. ProjectContext keyword artifacts apply their independent project-keyword-index migrations.
+- Building a Store-only semantic index applies semantic-index migrations to its staging SQLite file before metadata and vectors are inserted. ProjectContext complete and progress artifacts use their independent migration histories; complete artifacts are published atomically.
+- Opening the content-addressed cache catalog or shared vector cache applies its own migrations before it records metadata or reusable vectors.
 
-The active keyword and semantic index files are Store-local derived state. They are versioned independently from the LocalStore schema, so index-format changes should preserve their own atomic publication and snapshot-validation rules rather than couple them to a LocalStore transaction.
+Store-only keyword and legacy semantic indexes remain Store-local derived state. ProjectContext keyword artifacts plus content-addressed semantic artifacts, progress, catalog, and shared vectors are user-level derived state under the selected cache root. Every index format remains versioned independently from the LocalStore schema, so publication and snapshot-validation rules must not be coupled to a LocalStore transaction.
 
 ## Transaction and ownership rules
 
 - One SQLite transaction covers one physical database file. Do not claim a cross-file transaction exists.
 - LocalStore repository writes keep the catalog, effective Practice rows, revision records, and outbox state consistent within LocalStore.
-- Keyword FTS mutations and checkpoint updates share the keyword-index transaction.
-- Semantic vector rows and semantic metadata share the semantic-index staging transaction; publishing remains a separate close-and-rename step guarded by the Store snapshot fence.
-- Canonical query results are assembled from LocalStore. A keyword or semantic index supplies candidates and may be rebuilt, but does not become an alternate source for Practice content.
+- Keyword FTS mutations and checkpoint updates share the owning Store-only or ProjectContext keyword-index transaction.
+- Semantic vector rows and semantic metadata share the owning Store-only, complete-artifact, or progress transaction; complete publication remains a separate close-and-rename step guarded by the current snapshot fence.
+- Canonical query results are assembled from LocalStore or current ProjectContext sources. A keyword or semantic index supplies candidates and may be rebuilt, but does not become an alternate source for Practice content.
 
 ## Verification checklist
 
@@ -100,7 +106,7 @@ bun test packages/engine/src/local-store
 bun run typecheck
 ```
 
-Run the focused keyword or semantic tests when their database kind changes. For a real CLI check, use a worktree-local `--store-root`; opening a Store or an index can create derived files. Follow the [development workflow](./README.md#normal-development-workflow) for source, native-runtime, and release-staging validation.
+Run the focused keyword or semantic tests when their database kind changes. For a real CLI check, use worktree-local `--store-root` and `--cache-root`; opening a Store or building an artifact can create derived files. Follow the [development workflow](./README.md#normal-development-workflow) for source, native-runtime, and release-staging validation.
 
 For every migration, verify all of the following:
 

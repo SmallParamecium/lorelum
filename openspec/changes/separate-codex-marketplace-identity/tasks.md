@@ -6,7 +6,7 @@
 
 ## 2. Alpha migration documentation
 
-- [x] 2.1 Replace every public install and update selector in `README.md`, `docs/plugins/codex.md`, and the English/Chinese site Codex pages; add the one-time removal of legacy `lorelum` source before installing `lorelum@lorelum-plugins`; verify `rg 'lorelum@lorelum'` finds only explicitly labelled legacy-migration text.
+- [x] 2.1 Replace every public install and update selector in `README.md` and the English/Chinese site Codex pages; add the one-time removal of legacy `lorelum` source before installing `lorelum@lorelum-plugins`; verify `rg 'lorelum@lorelum'` finds only explicitly labelled legacy-migration text.
 - [x] 2.2 Update `docs/development/plugins.md` and `plugins/README.md` so checkout-backed development uses the new marketplace name and cannot instruct maintainers to configure old and new Lorelum sources together; verify the documented local cachebuster reinstall path uses `lorelum@lorelum-plugins`.
 - [x] 2.3 Add an alpha release-note entry that labels the selector rename as breaking and points users to the migration commands; verify the release-note location is linked from the relevant installation documentation.
 

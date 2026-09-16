@@ -15,7 +15,7 @@ A version pins the release. Omitting it selects the Registry's latest release. F
 
 Installing the same artifact again is safe. If the installed name has different content, Lorelum returns `pack.update-required`; use `pack update`.
 
-Installation also starts the semantic index work needed for the Pack. The result's `indexSync` reports `ready`, `pending`, or `failed`; an index failure leaves the Pack installed. Registry, source, Pack validation, Store, and `pack.update-required` errors exit `2`; see [Troubleshooting](../troubleshooting).
+Installation also starts the semantic index work needed for the Pack. The result includes its readable public `packRoot` at `packs/p-<pack-name>/current`; `indexSync` reports `ready`, `pending`, or `failed`, and an index failure leaves the Pack installed. Registry, source, Pack validation, Store, and `pack.update-required` errors exit `2`; see [Troubleshooting](../troubleshooting).
 
 ## Browse
 
@@ -27,7 +27,7 @@ lore pack list agentic-coding
 
 The first command lists installed Packs and returns each Pack's current local `packRoot`; `--details` adds metadata for discovery and also returns the Pack locator. A Pack name lists that Pack's Practices and returns its `packRoot` on the `pack` object. Use a returned ID with [get](./get). Practice summaries deliberately do not repeat per-Practice paths or resource paths.
 
-`packRoot` is useful when the caller explicitly chose a Pack to browse or maintain. It is not injected into query results, but the Codex Pack Catalog includes it for every installed Pack. The Catalog still does not load or enumerate Pack resources automatically. A locator belongs to the artifact current at this command's Store snapshot. After a mutation, rerun `pack list` or `get` rather than deriving a new root from a Pack name or Store layout. See [Pack format](./pack-format).
+`packRoot` is useful when the caller explicitly chose a Pack to browse or maintain. It is not injected into query results, but the Codex Pack Catalog includes it for every installed Pack. The Catalog still does not load or enumerate Pack resources automatically. It is a mutable `current` view, not an artifact digest path: after a mutation the same path may resolve to newer bytes or disappear after removal. Rerun `pack list` or `get` before treating it as current, rather than deriving a root from a Pack name or Store layout. See [Pack format](./pack-format).
 
 ## Update and remove
 

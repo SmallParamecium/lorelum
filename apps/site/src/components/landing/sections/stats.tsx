@@ -11,7 +11,7 @@ const STATS: Array<{
   labelKey: keyof LandingStrings;
 }> = [
   { value: 1, suffix: "", labelKey: "stats1Label" },
-  { value: 2, suffix: "", labelKey: "stats2Label" },
+  { value: 4, suffix: "", labelKey: "stats2Label" },
   { value: 100, suffix: "%", labelKey: "stats3Label" },
 ];
 

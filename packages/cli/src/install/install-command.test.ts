@@ -165,6 +165,7 @@ test("installs from an explicit Registry repository and is idempotent", async ()
         generation: 1,
         effectiveRevision: 1,
         delta: { added: ["agentic-coding.installation.placeholder"] },
+        packRoot: join(storageRoot, "packs", "p-agentic-coding", "current"),
         indexSync: { state: "ready", index: { state: "ready", vectorCount: 1 } },
       },
     });
@@ -188,6 +189,7 @@ test("installs from an explicit Registry repository and is idempotent", async ()
         generation: 1,
         effectiveRevision: 1,
         artifactDigest: first.data.artifactDigest,
+        packRoot: first.data.packRoot,
         delta: { added: [], changed: [], invalidated: [] },
         indexSync: { state: "ready" },
       },
@@ -372,6 +374,7 @@ This placeholder proves the Pack can be upgraded.
         idempotent: false,
         generation: 2,
         effectiveRevision: 2,
+        packRoot: join(storageRoot, "packs", "p-agentic-coding", "current"),
         delta: { changed: ["agentic-coding.installation.placeholder"] },
       },
     });

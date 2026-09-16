@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,13 +18,13 @@ import { createListService } from "./service.js";
 
 async function removeStoreRoot(rootPath: string): Promise<void> {
   /* eslint-disable no-await-in-loop -- Windows may release SQLite handles asynchronously. */
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
       await rm(rootPath, { force: true, recursive: true });
       return;
     } catch (error) {
-      if (attempt === 9) throw error;
-      await Bun.sleep(50);
+      if (attempt === 29) throw error;
+      await Bun.sleep(100);
     }
   }
   /* eslint-enable no-await-in-loop */
@@ -113,7 +113,7 @@ test("ListService reads the Pack catalog and a selected Pack through LocalStore"
         {
           name: "local-list-fixture",
           version: "0.1.0",
-          packRoot: expect.stringContaining("/packs/p-local-list-fixture/"),
+          packRoot: expect.stringMatching(/[\\/]packs[\\/]p-local-list-fixture[\\/]/),
           practiceCount: 2,
         },
       ],
@@ -128,7 +128,7 @@ test("ListService reads the Pack catalog and a selected Pack through LocalStore"
       pack: {
         name: "local-list-fixture",
         version: "0.1.0",
-        packRoot: expect.stringContaining("/packs/p-local-list-fixture/"),
+        packRoot: expect.stringMatching(/[\\/]packs[\\/]p-local-list-fixture[\\/]/),
       },
       practices: [
         {
@@ -156,7 +156,7 @@ test("ListService reads the Pack catalog and a selected Pack through LocalStore"
         {
           name: "local-list-fixture",
           version: "0.1.0",
-          packRoot: expect.stringContaining("/packs/p-local-list-fixture/"),
+          packRoot: expect.stringMatching(/[\\/]packs[\\/]p-local-list-fixture[\\/]/),
           description: "Local list service fixture.",
           applies_to: ["react", "typescript"],
         },
@@ -233,9 +233,12 @@ test("Pack catalog locators advance with a resource-only update", async () => {
     expect(secondList).toMatchObject({ generation: 2, effectiveRevision: 1 });
     expect(secondDetails).toMatchObject({ generation: 2, effectiveRevision: 1 });
     expect(secondCatalog).toMatchObject({ generation: 2, effectiveRevision: 1 });
-    expect(secondList.packs[0]?.packRoot).not.toBe(firstList.packs[0]?.packRoot);
-    expect(secondDetails.packs[0]?.packRoot).not.toBe(firstDetails.packs[0]?.packRoot);
-    expect(secondCatalog.pack.packRoot).not.toBe(firstCatalog.pack.packRoot);
+    expect(secondList.packs[0]?.packRoot).toBe(firstList.packs[0]?.packRoot);
+    expect(secondDetails.packs[0]?.packRoot).toBe(firstDetails.packs[0]?.packRoot);
+    expect(secondCatalog.pack.packRoot).toBe(firstCatalog.pack.packRoot);
+    expect(await readFile(join(secondCatalog.pack.packRoot, "references", "api.md"), "utf8")).toBe(
+      "second resource bytes\n",
+    );
   } finally {
     await removeStoreRoot(directory);
   }

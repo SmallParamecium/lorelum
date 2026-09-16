@@ -121,12 +121,12 @@ test("returns canonical defaults, author order and merged sources independent of
       {
         packName: "a-pack",
         sourcePath: "practices/read.md",
-        packRoot: expect.stringContaining(join("packs", "p-a-pack")),
+        packRoot: expect.stringMatching(/[\\/]packs[\\/]p-a-pack[\\/]/),
       },
       {
         packName: "z-pack",
         sourcePath: "practices/read.md",
-        packRoot: expect.stringContaining(join("packs", "p-z-pack")),
+        packRoot: expect.stringMatching(/[\\/]packs[\\/]p-z-pack[\\/]/),
       },
     ]);
     const reverse = await get(directory, "reverse");
@@ -203,7 +203,7 @@ test("requires a valid selected artifact before returning a source locator", asy
   });
 });
 
-test("resource-only upgrade returns a new locator without changing Practice content", async () => {
+test("resource-only upgrade keeps the current locator while updating resource bytes", async () => {
   await withDirectory(async (directory) => {
     const root = await install(
       directory,
@@ -216,7 +216,7 @@ test("resource-only upgrade returns a new locator without changing Practice cont
     const first = await get(directory);
     expect(first.exitCode).toBe(0);
     const firstSource = first.response.data.sources[0];
-    expect(firstSource.packRoot).toEqual(expect.stringContaining(join("packs", "p-resource-pack")));
+    expect(firstSource.packRoot).toBe(join(root.rootPath, "packs", "p-resource-pack", "current"));
 
     const packPath = join(directory, "resource-pack");
     await writeFile(join(packPath, "references", "api.md"), "second resource bytes\n");
@@ -228,8 +228,8 @@ test("resource-only upgrade returns a new locator without changing Practice cont
     expect(second.exitCode).toBe(0);
     const secondSource = second.response.data.sources[0];
     expect(second.response.data.contentDigest).toBe(first.response.data.contentDigest);
-    expect(secondSource.packRoot).not.toBe(firstSource.packRoot);
-    expect(existsSync(firstSource.packRoot)).toBe(false);
+    expect(secondSource.packRoot).toBe(firstSource.packRoot);
+    expect(existsSync(firstSource.packRoot)).toBe(true);
     expect(await readFile(join(secondSource.packRoot, "references", "api.md"), "utf8")).toBe(
       "second resource bytes\n",
     );

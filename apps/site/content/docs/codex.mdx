@@ -6,6 +6,10 @@ icon: Plug
 
 The Lorelum Plugin gives Codex an installed-Pack catalog and a Skill for retrieving engineering Practices. The catalog helps Codex discover available knowledge; the Skill guides targeted queries and full Practice reads.
 
+## Scope
+
+The integration is deliberately CLI-first: it uses the released `lore` executable, the Lorelum Skill, and the Codex Hook. It does not run a local MCP server or expose local MCP tools. A remote-retrieval MCP service is a separate future product boundary, not a local Plugin convenience.
+
 ## Prerequisites
 
 Complete [Quickstart](./quickstart), then check these commands in the environment that runs Codex:
@@ -15,7 +19,9 @@ lore --version
 lore pack list --details
 ```
 
-The Plugin does not bundle, install, or update the CLI. It uses the Packs already installed in the local Store.
+The Plugin requires Lorelum CLI v0.1.0-alpha.2 or later, available as `lore` on `PATH`. It does not bundle, install, or update the CLI; it uses Packs already installed in the local Store. Bun and Node are not required on an ordinary user's machine.
+
+If an older or unavailable CLI cannot run `lore hook codex`, the Hook lets Codex continue without a catalog. Install a compatible CLI before expecting Pack discovery.
 
 ## Install
 
@@ -26,7 +32,7 @@ codex plugin marketplace add lorelum/lorelum
 codex plugin add lorelum@lorelum-plugins
 ```
 
-Review the Plugin's Hook when Codex requests it, then start a new task. The Hook executes `lore pack list --details` to obtain Pack-level discovery data, including each current `packRoot`.
+Review the Plugin's Hook when Codex requests it, then start a new task. At supported session-start events, the Hook runs `lore hook codex` to obtain Pack-level discovery data, including each readable current `packRoot`.
 
 ### Migrate an earlier alpha installation
 
@@ -40,15 +46,15 @@ codex plugin marketplace add lorelum/lorelum
 codex plugin add lorelum@lorelum-plugins
 ```
 
-## How retrieval works
+## How it works
 
-1. At supported session-start events, the Hook supplies a compact catalog of installed Packs and their current `packRoot` locators.
-2. The Skill uses the catalog as a relevance hint and queries for the task and current decision.
+1. At supported session-start events, including a compacted task, the Hook supplies a compact catalog of installed Packs. It can include Pack names, versions, descriptions, declared stack scope, and readable current `packRoot` locators.
+2. The Skill uses that catalog as a relevance hint for a material task or decision, then runs one targeted semantic query when guidance is needed.
 3. Codex reads the complete Practice with `lore get` before applying its guidance.
 
 A catalog entry is not the full guidance or a resource listing. Catalog limits can omit Packs, so the catalog is not a hard filter on what may be relevant. Codex can refresh it with `lore pack list --details`.
 
-The Hook does not query, install Packs, or load the model by itself. When the Skill invokes a semantic query, the CLI starts the required Backend and prepares the model as needed.
+The Hook does not query, install or modify Packs, download models, start Backend, or build indexes by itself. A semantic query is initiated by the Skill when it needs guidance; preparation or recovery stays explicit rather than being hidden by the Hook.
 
 ## Verify
 
@@ -65,6 +71,6 @@ Review changed Hooks if Codex requests it, and start a new task. CLI and Pack up
 
 ## Troubleshoot
 
-If the catalog is missing, check that `lore` is on the Codex process's `PATH`, a Pack is installed, and the Hook is approved. An unavailable CLI or malformed catalog produces a diagnostic; the task can continue without injected catalog context.
+If the catalog is missing, check that `lore` is on the Codex process's `PATH`, the installed CLI supports `lore hook codex`, a Pack is installed, and the Hook is approved. An unavailable CLI, an older CLI, or malformed Hook data lets the task continue without injected catalog context; update the CLI before treating a missing catalog as a retrieval result.
 
 Use [Troubleshooting](./troubleshooting) for model and index problems. See [Agent instructions](./agents) for response handling and retrieval behavior.

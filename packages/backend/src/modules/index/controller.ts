@@ -3,7 +3,11 @@ import { BackendError, backendErrorBody, errorSchema } from "../../protocol/erro
 import { Elysia, status } from "elysia";
 import { requireJson, reject } from "../../plugins/local-auth";
 import { EmbeddingError } from "../embedding/errors";
-import { StoreBusyError, StoreRecoveryRequiredError } from "@lorelum/engine";
+import {
+  StoreBusyError,
+  StoreRecoveryRequiredError,
+  defaultQueryArtifactCacheRoot,
+} from "@lorelum/engine";
 import {
   indexMutationSchema,
   indexOperationParamsSchema,
@@ -11,10 +15,16 @@ import {
   indexStatusQuerySchema,
   indexStatusSchema,
 } from "./model";
-import type { IndexOperationService } from "./operation-service";
+import type {
+  ContentAddressedSemanticRuntimePort,
+  ContentAddressedTargetRequest,
+} from "../query/content-addressed-semantic-runtime";
 
 /** HTTP/authentication adapter for a Backend-hosted Engine semantic index service. */
-export function indexController(service: IndexOperationService, available: () => boolean) {
+export function indexController(
+  runtime: ContentAddressedSemanticRuntimePort,
+  available: () => boolean,
+) {
   return new Elysia({ normalize: false })
     .onBeforeHandle(({ request }) => {
       if (!available()) return reject(503, "backend.busy");
@@ -24,7 +34,7 @@ export function indexController(service: IndexOperationService, available: () =>
       BACKEND_ROUTES.indexStatus,
       async ({ query }) => {
         try {
-          return await service.status({ rootPath: query.storageRoot });
+          return await runtime.indexStatus({ rootPath: query.storageRoot }, targetForStatus(query));
         } catch (error) {
           return indexFailure(error);
         }
@@ -36,9 +46,12 @@ export function indexController(service: IndexOperationService, available: () =>
     )
     .post(
       BACKEND_ROUTES.indexBuild,
-      ({ body }) => {
+      async ({ body }) => {
         try {
-          return status(202, service.build({ rootPath: body.storageRoot }));
+          return status(
+            202,
+            await runtime.build({ rootPath: body.storageRoot }, targetForMutation(body)),
+          );
         } catch (error) {
           return indexFailure(error);
         }
@@ -50,9 +63,12 @@ export function indexController(service: IndexOperationService, available: () =>
     )
     .post(
       BACKEND_ROUTES.indexRebuild,
-      ({ body }) => {
+      async ({ body }) => {
         try {
-          return status(202, service.rebuild({ rootPath: body.storageRoot }));
+          return status(
+            202,
+            await runtime.rebuild({ rootPath: body.storageRoot }, targetForMutation(body)),
+          );
         } catch (error) {
           return indexFailure(error);
         }
@@ -64,8 +80,8 @@ export function indexController(service: IndexOperationService, available: () =>
     )
     .get(
       BACKEND_ROUTES.indexOperation,
-      ({ params }) => {
-        const operation = service.operation(params.operationId);
+      async ({ params }) => {
+        const operation = await runtime.indexOperation(params.operationId);
         return operation === undefined
           ? status(410, backendErrorBody("backend.operation-expired"))
           : operation;
@@ -75,6 +91,53 @@ export function indexController(service: IndexOperationService, available: () =>
         response: { 200: indexOperationSchema, 400: errorSchema, 410: errorSchema },
       },
     );
+}
+
+function targetForStatus(input: {
+  readonly cacheRoot?: string | undefined;
+  readonly projectRoot?: string | undefined;
+  readonly projectStartDirectory?: string | undefined;
+}): ContentAddressedTargetRequest {
+  const cacheRoot = input.cacheRoot ?? defaultQueryArtifactCacheRoot();
+  if (input.projectRoot !== undefined || input.projectStartDirectory !== undefined) {
+    return Object.freeze({
+      kind: "project",
+      cacheRoot,
+      ...(input.projectRoot === undefined ? {} : { projectRoot: input.projectRoot }),
+      ...(input.projectStartDirectory === undefined
+        ? {}
+        : { startDirectory: input.projectStartDirectory }),
+    });
+  }
+  return Object.freeze({ kind: "store", cacheRoot });
+}
+
+function targetForMutation(input: {
+  readonly projectContext?:
+    | {
+        readonly cacheRoot: string;
+        readonly projectRoot?: string | undefined;
+        readonly startDirectory?: string | undefined;
+      }
+    | undefined;
+  readonly cacheRoot?: string | undefined;
+}): ContentAddressedTargetRequest {
+  if (input.projectContext !== undefined) {
+    return Object.freeze({
+      kind: "project",
+      cacheRoot: input.projectContext.cacheRoot,
+      ...(input.projectContext.projectRoot === undefined
+        ? {}
+        : { projectRoot: input.projectContext.projectRoot }),
+      ...(input.projectContext.startDirectory === undefined
+        ? {}
+        : { startDirectory: input.projectContext.startDirectory }),
+    });
+  }
+  return Object.freeze({
+    kind: "store",
+    cacheRoot: input.cacheRoot ?? defaultQueryArtifactCacheRoot(),
+  });
 }
 
 function indexFailure(error: unknown) {

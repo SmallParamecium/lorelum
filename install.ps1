@@ -21,6 +21,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 renders Invoke-WebRequest progress per received chunk, which makes
+# multi-megabyte release downloads tens of times slower and looks frozen; keep the progress
+# UI off and report progress through Write-Output instead.
+$ProgressPreference = 'SilentlyContinue'
 $repository = 'https://github.com/lorelum/lorelum'
 $releaseBase = if ($env:LORELUM_INSTALL_RELEASE_BASE_URL) { $env:LORELUM_INSTALL_RELEASE_BASE_URL } else { "$repository/releases/download" }
 $releaseApiBase = if ($env:LORELUM_INSTALL_RELEASE_API_BASE_URL) { $env:LORELUM_INSTALL_RELEASE_API_BASE_URL } else { 'https://api.github.com/repos/lorelum/lorelum/releases' }
@@ -143,6 +147,60 @@ function Normalize-Version([string]$Value) {
   return $trimmed
 }
 
+function Get-ManagedLoreExecutable([string]$Content, [string]$Root) {
+  $match = [regex]::Match($Content, '\A@echo off\r?\n"(?<target>[^"\r\n]+)" %\*\r?\n\z')
+  if (-not $match.Success) { return $null }
+  $rawTarget = $match.Groups['target'].Value
+  if (-not [System.IO.Path]::IsPathRooted($rawTarget) -or
+      $rawTarget.Contains('/') -or
+      $rawTarget -match '[\x00-\x1F<>|*?"]') {
+    return $null
+  }
+  if (($rawTarget -split '\\') -contains '.' -or ($rawTarget -split '\\') -contains '..') {
+    return $null
+  }
+  try {
+    $versionsRoot = [System.IO.Path]::GetFullPath((Join-Path $Root 'versions')).TrimEnd('\')
+  } catch {
+    return $null
+  }
+  $prefix = $versionsRoot + [System.IO.Path]::DirectorySeparatorChar
+  if (-not $rawTarget.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return $null
+  }
+  $relative = $rawTarget.Substring($prefix.Length)
+  if ($relative -notmatch '^[^\\/:*?<>|]+\\lore\.exe$') { return $null }
+  return $rawTarget
+}
+
+$script:lastStopDiagnostic = ''
+function Invoke-LoreBackendStop([string]$Executable) {
+  $script:lastStopDiagnostic = ''
+  $diagnosticPath = Join-Path $temporary ("backend-stop-" + [System.IO.Path]::GetRandomFileName() + '.log')
+  try {
+    if (-not $Executable -or -not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
+      $script:lastStopDiagnostic = 'the backend stop executable is missing or is not a regular file'
+      return $false
+    }
+    & $Executable 'backend' 'stop' *> $diagnosticPath
+    if ($LASTEXITCODE -eq 0) { return $true }
+    $value = if (Test-Path -LiteralPath $diagnosticPath -PathType Leaf) {
+      ((Get-Content -LiteralPath $diagnosticPath -Raw) -replace '[\r\n]+', ' ').Trim()
+    } else {
+      ''
+    }
+    $script:lastStopDiagnostic = if ($value) {
+      $value.Substring(0, [Math]::Min(512, $value.Length))
+    } else {
+      'the backend stop command returned no diagnostic output'
+    }
+    return $false
+  } catch {
+    $script:lastStopDiagnostic = $_.Exception.Message.Substring(0, [Math]::Min(512, $_.Exception.Message.Length))
+    return $false
+  }
+}
+
 function Resolve-LatestTag {
   $latestPath = Join-Path $temporary 'latest-release.json'
   try {
@@ -230,12 +288,17 @@ try {
   $commandPath = Join-Path $binDirectory 'lore.cmd'
   $expectedTarget = Join-Path $destination 'lore.exe'
   $shimContent = "@echo off`r`n`"$expectedTarget`" %*`r`n"
+  $currentExecutable = $null
 
-  if (Test-Path -LiteralPath $commandPath -PathType Leaf) {
+  if (Test-Path -LiteralPath $commandPath) {
+    if (-not (Test-Path -LiteralPath $commandPath -PathType Leaf)) {
+      Fail "existing command is not managed by Lorelum: $commandPath"
+    }
     $existing = Get-Content -LiteralPath $commandPath -Raw
     if ($existing -notmatch [regex]::Escape((Join-Path $installRoot 'versions\'))) {
       Fail "existing command is not managed by Lorelum: $commandPath"
     }
+    $currentExecutable = Get-ManagedLoreExecutable $existing $installRoot
   }
 
   if (Test-Path -LiteralPath $destination) {
@@ -245,7 +308,29 @@ try {
     if ((Get-Sha256 (Join-Path $packageDirectory 'lore.exe')) -ne (Get-Sha256 (Join-Path $destination 'lore.exe'))) {
       Fail "existing version differs from the verified archive: $Version"
     }
-  } else {
+  }
+
+  if ((Test-Path -LiteralPath $commandPath) -and
+      -not [string]::Equals($currentExecutable, $expectedTarget, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Write-Output 'Stopping the existing Lorelum Backend before upgrading.'
+    $stopped = $false
+    if ($currentExecutable) {
+      $stopped = Invoke-LoreBackendStop $currentExecutable
+    }
+    if (-not $stopped) {
+      $stopped = Invoke-LoreBackendStop (Join-Path $packageDirectory 'lore.exe')
+    }
+    if (-not $stopped) {
+      $recovery = if ($currentExecutable) {
+        "`"$currentExecutable`" backend stop"
+      } else {
+        'the previous release''s backend stop command'
+      }
+      Fail "cannot safely stop the existing Lorelum Backend; the previous release remains active and was not replaced. Run $recovery, resolve its reported error, then rerun the installer. Last stop result: $script:lastStopDiagnostic"
+    }
+  }
+
+  if (-not (Test-Path -LiteralPath $destination)) {
     New-Item -ItemType Directory -Force -Path (Join-Path $installRoot 'versions') | Out-Null
     # Move is atomic on the same volume (the default layout: temp and install root both
     # under the user profile drive). A LORELUM_INSTALL_ROOT on another drive degrades

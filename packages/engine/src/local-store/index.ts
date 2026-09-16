@@ -63,3 +63,4 @@ export type {
 } from "./model/types";
 
 export { isPackResourcePath, isPracticeSourcePath } from "./model/candidate";
+export { revisionDeltaPracticeIds } from "./model/effective-practices";

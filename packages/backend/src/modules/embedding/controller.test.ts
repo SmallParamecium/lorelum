@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { createBackendApp } from "../../app";
-import type { QueryService, SemanticQueryService } from "@lorelum/engine";
+import type { QueryService } from "@lorelum/engine";
 import { DEFAULT_BACKEND_SETTINGS } from "../../config/model";
 import { createBackendService } from "../backend/service";
 import { createEmbeddingService } from "./service";
 import { EmbeddingError } from "./errors";
 import { embeddingController } from "./controller";
+import { createContentAddressedSemanticRuntimeStub } from "../query/content-addressed-semantic-runtime.test-helper";
 
 function fixture() {
   const embedding = createEmbeddingService({
@@ -25,16 +26,11 @@ function fixture() {
       return { mode: "keyword", results: [] };
     },
   };
-  const semanticQueryService: SemanticQueryService = {
-    async query() {
-      return { mode: "semantic", profileId: "a".repeat(64), coverage: "complete", results: [] };
-    },
-  };
   const app = createBackendApp({
     backend,
     embedding,
     keywordQueryService,
-    semanticQueryService,
+    semanticRuntime: createContentAddressedSemanticRuntimeStub(),
   });
   function request(path: string, method = "GET", body?: unknown, authorized = true) {
     return app.handle(

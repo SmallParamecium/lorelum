@@ -70,7 +70,7 @@ Practice 正文必须仍包含触发条件、行动、直接原因、例外和�
 
 资源文件的内容不进入 canonical Practice、Effective Practice merge、Decision traversal、keyword index、semantic index 或 query result。相反，resource: link 位于 Practice body，因此新增、删除或修改这个 link 会改变 canonical Practice contentDigest，并遵循既有 effectiveRevision/index 更新语义。只改变 resource 文件的 bytes 时，Practice contentDigest 和 retrieval revision 保持不变。
 
-### 4. lore get 与 lore pack list 默认给出 packRoot
+### 4. lore get、pack list 与 Pack mutation 返回公开 current packRoot
 
 lore get 的每个 source 从：
 
@@ -84,15 +84,21 @@ lore get 的每个 source 从：
 { packName, sourcePath, packRoot }
 ```
 
-packRoot 是该 source 在本机当前 active sealed artifact 的绝对根目录。sourcePath 已经是 Pack-root-relative Practice 文件路径，因此不另返回重复的 practicePath；Practice 的完整 canonical body 已经在同一 result 中，也不需要调用方再次读它。
+packRoot 是由 active manifest 派生的公开根目录：
 
-Engine 必须在返回 Practice 的同一已验证 snapshot 中，根据 active artifact 生成 source.packRoot；CLI 不得通过 packName、Store root 或私有目录布局自行拼接。
+```text
+<store-root>/packs/<storageKey>/current
+```
 
-lore pack list 与 lore pack list --details 必须在每个 Pack entry 返回 packRoot；lore pack list <pack> 必须在其 pack object 返回 packRoot。Practice summary 不增加 practicePath 或 resource paths：完整 Practice 仍由 lore get 读取，资源仍由 Practice 的 resource: link 路由。pack list 的 locator 用于调用方已经明确选择某个 Pack 后的 Pack-level browse、诊断或作者工具，不代表自动读取该 Pack 的所有内容。
+它不是 `<artifactDigest>` 目录，artifactDigest 仍只用于 Engine 的 sealed artifact 校验、promotion、GC 与 recovery。sourcePath 已经是 Pack-root-relative Practice 文件路径，因此不另返回重复的 practicePath；Practice 的完整 canonical body 已经在同一 result 中，也不需要调用方再次读它。
 
-query 不增加路径字段。Codex Hook 在生成 Catalog 时保留每个 Pack 的 packRoot，使 Agent 可以在 SessionStart 即知道已安装 Pack 的本机根；Catalog 仍只包含 Pack-level 元数据和这个 locator，绝不枚举 resource 路径、resource 内容或 Practice body。packRoot 不替代 Practice 的 resource: 路由：Agent 仍应先基于当前任务选择或取回 Practice，再按需读取、复制或显式运行相应 resource。
+在 macOS/Linux，current 是指向同目录 active artifact 的相对目录 symlink；在 Windows，它是指向绝对 artifact 目录的 directory junction。两者都由 Engine 创建，位于 digest artifact 外部，因而不进入 artifact digest、projection 或 Pack 的 symlink 验证范围。Engine 总是先从 manifest 验证实际 artifact，再确认 current 在该次返回前解析到这个 artifact；CLI 只投影 Engine 值，不得通过 packName、Store root 或私有目录布局自行拼接。
 
-一个 Practice 可能有多个 active source。每个 source 都保留自己的 packRoot，调用方不应把不同 Pack 的 resources 假装合并成一个目录；lore pack list <pack> 是一个显式 Pack 选择，可为后续 resource resolution 提供来源。若当前任务无法选择来源，Host 应保留来源差异，而不是无提示地把排序第一项说成唯一来源。packRoot 是当前本机 artifact locator，不是跨机器、跨版本或长期持有的 capability；后续读取发现缺失或不一致时，调用方应重新执行 lore get 或 lore pack list，而不要依赖猜测的私有 artifact 路径。
+lore pack list 与 lore pack list --details 必须在每个 Pack entry 返回 packRoot；lore pack list <pack> 必须在其 pack object 返回 packRoot；成功 lore pack install 与 lore pack update 也返回刚刚激活的 packRoot。Practice summary 不增加 practicePath 或 resource paths：完整 Practice 仍由 lore get 读取，资源仍由 Practice 的 resource: link 路由。pack list 的 locator 用于调用方已经明确选择某个 Pack 后的 Pack-level browse、诊断或作者工具，不代表自动读取该 Pack 的所有内容。remove 不返回一个已经失效的 root。
+
+install/update 在 journal 保护下先发布目标 manifest、同步目标 current locator、再提交 SQLite 并清理 journal；remove 以最终 manifest 为准移除 locator，再进行 artifact GC。idempotent install 同样同步 locator。journal recovery 与 reindex 在已经选定最终 manifest 后重建所有 current locator；旧 Store 首次 locator read 发现缺失、dangling 或指错的 link 时，短暂获取 mutation lock，收敛后重试原 read。健康 Store 仍完全 lock-free，locator 修复不是 canonical mutation，因此不改 generation、effectiveRevision 或 index。
+
+一个 Practice 可能有多个 active source。每个 source 都保留自己的 packRoot，调用方不应把不同 Pack 的 resources 假装合并成一个目录；lore pack list <pack> 是一个显式 Pack 选择，可为后续 resource resolution 提供来源。若当前任务无法选择来源，Host 应保留来源差异，而不是无提示地把排序第一项说成唯一来源。packRoot 是当前可变 view，不是跨机器、跨版本或历史 bytes 的 capability；Pack mutation 后路径字符串可能仍相同但解析到新 artifact，Host 若需按新 source 使用资源必须重新 get/list，而不得猜测私有 artifact 路径或把 current 当成 snapshot pin。
 
 ### 5. Resource lifecycle 与读取责任
 
@@ -104,8 +110,8 @@ Registry Git tree 或 local Pack directory
   -> decoder 扫描、link 校验、candidate
   -> snapshot writer 保留原始 bytes
   -> sealed projection 与 artifact digest
-  -> install/update/recovery 的 active artifact
-  -> lore get 返回 source.packRoot，或 lore pack list 返回 Pack packRoot
+  -> install/update/remove/recovery/reindex 收敛 public current view
+  -> lore get、lore pack list 或 install/update 返回 Pack packRoot
   -> Host 解析 Practice 的 resource: target
   -> read reference / copy asset / explicitly run script
 ```
@@ -122,15 +128,16 @@ pack-creator 属于独立 lorelum-packs 仓库。它需要新增资源树、reso
 
 ## Risks / Trade-offs
 
-- 宿主直接使用 packRoot 可能把实现细节误当作 API。→ packRoot 是公开 locator，SessionStart Catalog 会主动提供每个已安装 Pack 的当前 root；调用方仍不得从 Pack name 拼接 artifact 路径或读取 SQLite/projection。Catalog 中的 root 可能在后续 mutation 后失效，读取失败时重新执行 lore get 或 lore pack list。
+- 宿主直接使用 packRoot 可能把实现细节误当作 API。→ public contract 固定为 current view，SessionStart Catalog 会主动提供每个已安装 Pack 的当前 root；调用方仍不得从 Pack name 拼接 digest artifact 路径或读取 SQLite/projection。current 的解析内容可在后续 mutation 改变；需要按当前 source 使用资源时重新执行 lore get 或 lore pack list。
 - 资源内容可能很大、是二进制或不适合直接注入上下文。→ 目录和字节预算在 intake 时强制，且 resources 永不自动进入 query/get body；由 Host 按类型和任务按需处理。
 - script 容易被误解为 Pack 自动化权限。→ 没有执行器、effect metadata 或授权声明；正文说明和当前任务授权是唯一运行条件。
-- resource-only update 不刷新索引，调用方可能持有旧 path。→ locator 明确只绑定 get 时的 artifact；读取失败后重新 get，绝不猜测或静默 fallback。
+- resource-only update 不刷新索引，调用方可能持有先前的 Practice 内容。→ current root 会切换到新 artifact；Host 在 Pack mutation 后重新 get/list 以获得当前 source，绝不把旧 get result 与新的 current bytes 假装为同一 snapshot。
+- current link/junction 可能被移动、删除或被外部节点占用。→ manifest 与 digest artifact 永远优先；缺失、dangling 或错误 link 在锁内自动重建，不能安全替换的非链接节点 fail closed，不递归删除未知内容。
 - 旧 CLI 不会 materialize 新目录。→ 新 Pack release 不得把 resource 放成 Practice 的唯一安全事实；pack-creator release guidance 要求用支持该协议的 CLI 验证完整 install path。
 
 ## Migration Plan
 
 1. 新客户端将没有三个资源目录的旧 Pack 视为 resources 为空，保持现有读取与 retrieval 行为。
 2. 含 resource: link 或 resources 的 Pack 必须以新版本发布。link 改动是 Practice 内容改动；仅 resource bytes 改动仍必须发布新的 immutable Pack artifact。
-3. 实现先扩展 format、artifact lifecycle 和 lore get，再更新 Host Skill、CLI/site docs 与 pack-creator；在官方 Pack 使用 resources 前，先以 isolated Store 验证 Registry 到 resource read 的完整链路。
+3. 新客户端先从有效 manifest 与 digest artifact 补建旧 Store 缺失的 current view，不改 canonical revision；随后实现 install/update/remove/recovery/reindex 的一致维护，再更新 Host Skill、CLI/site docs 与 pack-creator；在官方 Pack 使用 resources 前，先以 isolated Store 验证 Registry 到 resource read 的完整链路。
 4. 实施完成后新增 ADR 记录格式、artifact 与 Agent integration 的补充决定；不改写既有 Accepted ADR。

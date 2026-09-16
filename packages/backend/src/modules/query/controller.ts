@@ -10,20 +10,25 @@ import {
   SemanticIndexQueryError,
   StoreBusyError,
   StoreRecoveryRequiredError,
+  defaultQueryArtifactCacheRoot,
   type QueryResult,
   type QueryService,
   type SemanticQueryResult,
-  type SemanticQueryService,
 } from "@lorelum/engine";
 import { Elysia, status } from "elysia";
 import { reject, requireJson } from "../../plugins/local-auth";
 import { backendErrorBody, errorSchema } from "../../protocol/errors";
 import { EmbeddingError } from "../embedding/errors";
 import { queryRequestSchema, queryResultSchema, type BackendQueryResult } from "./model";
+import type {
+  ContentAddressedSemanticRuntimePort,
+  ContentAddressedSemanticQueryResult,
+  ContentAddressedTargetRequest,
+} from "./content-addressed-semantic-runtime";
 
 export interface QueryControllerServices {
   readonly keywordQueryService: QueryService;
-  readonly semanticQueryService: SemanticQueryService;
+  readonly semanticRuntime: ContentAddressedSemanticRuntimePort;
 }
 
 /** The controller selects the Engine use case; it does not implement retrieval rules. */
@@ -47,7 +52,15 @@ export function queryController(services: QueryControllerServices, available: ()
             );
           }
           return toResponse(
-            await services.semanticQueryService.query({ rootPath: body.storageRoot }, query),
+            await services.semanticRuntime.query(
+              { rootPath: body.storageRoot },
+              targetFor(body.query),
+              query,
+              {
+                maxWaitMs: body.query.maxWaitMs ?? 3_000,
+                minCoveragePercent: body.query.minCoveragePercent ?? 0,
+              },
+            ),
           );
         } catch (error) {
           return queryFailure(error);
@@ -58,6 +71,34 @@ export function queryController(services: QueryControllerServices, available: ()
         response: { 200: queryResultSchema, 400: errorSchema, 500: errorSchema, 503: errorSchema },
       },
     );
+}
+
+function targetFor(input: {
+  readonly projectContext?:
+    | {
+        readonly projectRoot?: string | undefined;
+        readonly startDirectory?: string | undefined;
+        readonly cacheRoot: string;
+      }
+    | undefined;
+  readonly cacheRoot?: string | undefined;
+}): ContentAddressedTargetRequest {
+  if (input.projectContext !== undefined) {
+    return Object.freeze({
+      kind: "project",
+      cacheRoot: input.projectContext.cacheRoot,
+      ...(input.projectContext.projectRoot === undefined
+        ? {}
+        : { projectRoot: input.projectContext.projectRoot }),
+      ...(input.projectContext.startDirectory === undefined
+        ? {}
+        : { startDirectory: input.projectContext.startDirectory }),
+    });
+  }
+  return Object.freeze({
+    kind: "store",
+    cacheRoot: input.cacheRoot ?? defaultQueryArtifactCacheRoot(),
+  });
 }
 
 function queryFailure(error: unknown) {
@@ -100,7 +141,10 @@ function domainError(code: string, message: string) {
   return { error: { code, message } };
 }
 
-function toResponse(result: QueryResult | SemanticQueryResult): BackendQueryResult {
+function toResponse(
+  result: QueryResult | SemanticQueryResult | ContentAddressedSemanticQueryResult,
+): BackendQueryResult {
+  if ("state" in result) return result;
   const results = result.results.map((hit) => ({
     practiceId: hit.practiceId,
     title: hit.title,
@@ -111,5 +155,18 @@ function toResponse(result: QueryResult | SemanticQueryResult): BackendQueryResu
     contentDigest: hit.contentDigest,
   }));
   if (result.mode === "keyword") return { mode: "keyword", results };
-  return { mode: "semantic", profileId: result.profileId, coverage: result.coverage, results };
+  return {
+    mode: "semantic",
+    profileId: result.profileId,
+    coverage: result.coverage,
+    ...("indexedPracticeCount" in result
+      ? {
+          indexedPracticeCount: result.indexedPracticeCount,
+          totalPracticeCount: result.totalPracticeCount,
+          operationId: result.operationId,
+        }
+      : {}),
+    ...("context" in result && result.context !== undefined ? { context: result.context } : {}),
+    results,
+  };
 }

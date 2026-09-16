@@ -3,6 +3,7 @@ import type {
   StoreMetadataSnapshot,
 } from "../../persistence/repositories/local-store";
 import { StoreRecoveryRequiredError } from "../storage/errors";
+import { syncCurrentPackLocators } from "../storage/artifacts/current-locator";
 import {
   clearOperationJournal,
   listOperationJournals,
@@ -58,6 +59,7 @@ async function reconcileJournal(
     // never committed SQLite, so the old manifest is the recovery image.
     if (oldManifest.generation === 0 && oldManifest.effectiveRevision === 0) {
       await writeManifest(rootPath, oldManifest);
+      await syncCurrentPackLocators(rootPath, oldManifest);
       await clearOperationJournal(rootPath, operationId);
       return;
     }
@@ -80,11 +82,13 @@ async function reconcileJournal(
     if (active === undefined || !isManifestEqual(active, targetManifest)) {
       await writeManifest(rootPath, targetManifest);
     }
+    await syncCurrentPackLocators(rootPath, targetManifest);
     await clearOperationJournal(rootPath, operationId);
     return;
   }
   if (tupleEquals(sqliteTuple, oldTuple)) {
     await writeManifest(rootPath, oldManifest);
+    await syncCurrentPackLocators(rootPath, oldManifest);
     await clearOperationJournal(rootPath, operationId);
     return;
   }
@@ -117,7 +121,9 @@ export async function runStoreRecovery(
   if (manifest === undefined) {
     if (metadata === undefined) {
       // Fresh store: nothing was ever committed. Treat as consistent empty.
-      return { manifest: createEmptyManifest(), metadata: undefined };
+      const empty = createEmptyManifest();
+      await syncCurrentPackLocators(rootPath, empty);
+      return { manifest: empty, metadata: undefined };
     }
     throw new StoreRecoveryRequiredError(
       "SQLite has committed state but the active manifest is missing",
@@ -138,5 +144,6 @@ export async function runStoreRecovery(
       `manifest tuple (${manifest.generation}, ${manifest.effectiveRevision}) differs from SQLite tuple (${metadata.generation}, ${metadata.effectiveRevision})`,
     );
   }
+  await syncCurrentPackLocators(rootPath, manifest);
   return { manifest, metadata };
 }

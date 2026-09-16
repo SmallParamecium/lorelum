@@ -1,6 +1,4 @@
 import { ConfigError } from "@lorelum/config";
-import { initializeApplicationConfig } from "../config/initialize";
-import { lifecycleCommand } from "./common";
 import { loadBackendConfig } from "@lorelum/backend/config";
 import type { BackendSupervisor } from "@lorelum/backend/control";
 import {
@@ -10,12 +8,17 @@ import {
   type BackendStatus,
 } from "@lorelum/backend/protocol";
 
+import { initializeApplicationConfig } from "../config/initialize";
 import type { JsonSchema, JsonValue } from "../output/protocol";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry";
+import { CliError, frameworkErrorCodes, invalidInvocationError } from "../runtime/errors";
 
 export interface BackendCommandServices {
   readonly createSupervisor: (options?: { initialize?: boolean }) => Promise<BackendSupervisor>;
 }
+
+const DEFAULT_LEASE_TTL_MS = 60_000;
 
 // Translate the Zod status contract into the smaller JSON schema dialect used
 // by CLI discovery. The adapter stays local because CLI output is not an HTTP
@@ -33,6 +36,33 @@ const backendStatusResultSchema: JsonSchema = {
     instanceId: { type: "string" },
     buildIdentity: { type: "string" },
   },
+};
+const stopIfIdleResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["state"],
+  properties: {
+    state: { enum: ["stopped", "deferred"] },
+    reason: { enum: ["active-long-task", "unknown-activity"] },
+  },
+};
+const stopResultSchema: JsonSchema = {
+  oneOf: [backendStatusResultSchema, stopIfIdleResultSchema],
+};
+const leaseResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["leaseId", "expiresAt"],
+  properties: {
+    leaseId: { type: "string" },
+    expiresAt: { type: "string" },
+  },
+};
+const releasedLeaseResultSchema: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["released"],
+  properties: { released: { const: true } },
 };
 
 /**
@@ -72,22 +102,55 @@ function toResult(status: BackendStatus): JsonValue {
   };
 }
 
+function toHandoffResult(result: Awaited<ReturnType<BackendSupervisor["stopIfIdle"]>>): JsonValue {
+  return {
+    state: result.state,
+    ...(result.reason === undefined ? {} : { reason: result.reason }),
+  };
+}
+
+function toLeaseResult(
+  result: Awaited<ReturnType<BackendSupervisor["acquireTaskLease"]>>,
+): JsonValue {
+  return { leaseId: result.leaseId, expiresAt: result.expiresAt };
+}
+
+function parseLeaseTtl(value: unknown): number {
+  if (value === undefined) return DEFAULT_LEASE_TTL_MS;
+  if (typeof value !== "string" || !/^[0-9]+$/.test(value)) throw invalidInvocationError();
+  const ttlMs = Number(value);
+  if (!Number.isSafeInteger(ttlMs) || ttlMs < 1_000 || ttlMs > 300_000)
+    throw invalidInvocationError();
+  return ttlMs;
+}
+
+function lifecycleError(error: unknown): never {
+  if (error instanceof BackendError) throw new CliError(error.code, error.message);
+  throw error;
+}
+
+const leaseTtlOption = {
+  longFlag: "--ttl-ms",
+  description: "Keep the machine-managed task lease active for this many milliseconds.",
+  value: { name: "milliseconds", required: true },
+  optionRequired: false,
+  defaultValue: String(DEFAULT_LEASE_TTL_MS),
+} as const;
+
 /** Control commands share the CLI registry but have no LocalStore dependency. */
 export function createBackendCommands(
   services: BackendCommandServices,
 ): readonly CommandDefinition[] {
-  return (
+  const startAndStatus = (
     [
       ["start", "Start the local backend and wait for it to become ready."],
       ["status", "Report the current local backend status without starting it."],
-      ["stop", "Stop the local backend and wait for it to exit."],
     ] as const
   ).map(([operation, summary]) =>
-    lifecycleCommand({
+    lifecycleDefinition({
       name: `backend.${operation}`,
       summary,
       resultSchema: backendStatusResultSchema,
-      errorCodes: backendErrorCodes,
       execute: async () =>
         toResult(
           await (
@@ -96,4 +159,129 @@ export function createBackendCommands(
         ),
     }),
   );
+
+  const stop: CommandDefinition = {
+    name: "backend.stop",
+    summary: "Stop the local backend, or safely hand it off only when it is idle.",
+    positionals: [],
+    options: [
+      {
+        longFlag: "--if-idle",
+        description: "Stop only a verified idle Backend; active or unknown work is left running.",
+        optionRequired: false,
+      },
+    ],
+    resultSchema: stopResultSchema,
+    output: jsonOnlyOutput,
+    errorCodes: [...frameworkErrorCodes, ...backendErrorCodes],
+    exitCodes: [0, 2],
+    async handler(invocation) {
+      try {
+        const supervisor = await services.createSupervisor({ initialize: false });
+        if (invocation.options.ifIdle === true)
+          return { data: toHandoffResult(await supervisor.stopIfIdle()) };
+        return { data: toResult(await supervisor.stop()) };
+      } catch (error) {
+        lifecycleError(error);
+      }
+    },
+  };
+
+  const leases: readonly CommandDefinition[] = [
+    {
+      name: "backend.lease.acquire",
+      summary: "Acquire a machine-managed Backend task lease.",
+      positionals: [],
+      options: [leaseTtlOption],
+      resultSchema: leaseResultSchema,
+      output: jsonOnlyOutput,
+      errorCodes: [...frameworkErrorCodes, ...backendErrorCodes],
+      exitCodes: [0, 2],
+      async handler(invocation) {
+        try {
+          return {
+            data: toLeaseResult(
+              await (
+                await services.createSupervisor({ initialize: false })
+              ).acquireTaskLease(parseLeaseTtl(invocation.options.ttlMs)),
+            ),
+          };
+        } catch (error) {
+          lifecycleError(error);
+        }
+      },
+    },
+    {
+      name: "backend.lease.renew",
+      summary: "Renew a machine-managed Backend task lease.",
+      positionals: [{ name: "lease-id", required: true }],
+      options: [leaseTtlOption],
+      resultSchema: leaseResultSchema,
+      output: jsonOnlyOutput,
+      errorCodes: [...frameworkErrorCodes, ...backendErrorCodes],
+      exitCodes: [0, 2],
+      async handler(invocation) {
+        try {
+          const leaseId = invocation.positionals[0];
+          if (leaseId === undefined) throw invalidInvocationError();
+          return {
+            data: toLeaseResult(
+              await (
+                await services.createSupervisor({ initialize: false })
+              ).renewTaskLease(leaseId, parseLeaseTtl(invocation.options.ttlMs)),
+            ),
+          };
+        } catch (error) {
+          lifecycleError(error);
+        }
+      },
+    },
+    {
+      name: "backend.lease.release",
+      summary: "Release a machine-managed Backend task lease.",
+      positionals: [{ name: "lease-id", required: true }],
+      options: [],
+      resultSchema: releasedLeaseResultSchema,
+      output: jsonOnlyOutput,
+      errorCodes: [...frameworkErrorCodes, ...backendErrorCodes],
+      exitCodes: [0, 2],
+      async handler(invocation) {
+        try {
+          const leaseId = invocation.positionals[0];
+          if (leaseId === undefined) throw invalidInvocationError();
+          await (await services.createSupervisor({ initialize: false })).releaseTaskLease(leaseId);
+          return { data: { released: true } };
+        } catch (error) {
+          lifecycleError(error);
+        }
+      },
+    },
+  ];
+
+  return [...startAndStatus, stop, ...leases];
+}
+
+function lifecycleDefinition(input: {
+  readonly name: string;
+  readonly summary: string;
+  readonly resultSchema: JsonSchema;
+  readonly execute: () => Promise<JsonValue>;
+}): CommandDefinition {
+  return {
+    name: input.name,
+    summary: input.summary,
+    positionals: [],
+    options: [],
+    resultSchema: input.resultSchema,
+    output: jsonOnlyOutput,
+    errorCodes: [...frameworkErrorCodes, ...backendErrorCodes],
+    exitCodes: [0, 2],
+    async handler() {
+      try {
+        return { data: await input.execute() };
+      } catch (error) {
+        lifecycleError(error);
+      }
+    },
+  };
 }

@@ -20,11 +20,24 @@ Lorelum is a Bun + TypeScript monorepo for engineering-knowledge retrieval: the 
 | `packages/format` | public Practice/Pack schema, parsing, validation, localization helpers | `packages/format/AGENTS.md` |
 | `apps/site` | public landing and documentation site | `apps/site/AGENTS.md` |
 | `packages/ui` | reusable Web primitives and production design tokens | `packages/ui/AGENTS.md` |
-| `docs` | current contracts, development material, ADRs, research | `docs/AGENTS.md` |
+| `docs` | maintainer material, internal APIs, ADRs, research | `docs/AGENTS.md` |
 
 Current integrations are CLI-first: use the released CLI together with host-native Skills and Hooks. Do not introduce local MCP servers, stdio wiring, MCP tools, MCP-backed Plugin behavior, or a local MCP wrapper around `lore`. `packages/mcp` is a non-product scaffold. A remote-retrieval MCP boundary requires a separately approved design.
 
+## Documentation ownership
+
+- Decide the reader before changing documentation. A product user who needs to install, configure, operate, understand an observable result, or recover from an error reads the bilingual site under `apps/site/content/docs/`; update the matching English and Chinese pages only when that user-facing guidance changes.
+- `docs/` is for maintainers: internal APIs, implementation and ABI details, architecture rationale, source/build verification, and operational evidence. Do not move such material into the site merely because the same code change has a user-facing aspect.
+- A user guide and a maintainer document may both exist when they serve those distinct readers. They must not restate the same workflow or contract: link across the boundary instead. If a root document is fully equivalent to a site guide after a migration, delete the root copy and repair its inbound links.
+
 For visual or component work, read [DESIGN.md](./DESIGN.md) first. Reusable Web components and production tokens belong in `packages/ui`; routes, copy, data, and page-specific composition belong to the consuming application. Run `bun run design:lint` after changing `DESIGN.md`.
+
+## User experience and failure handling
+
+- Treat user experience as a first-order product correctness requirement. For every feature and interaction, make the common, safe workflow complete with sensible defaults, clear precedence, and minimal manual setup or cleanup.
+- Do not make users resolve internal ambiguity, stale derived state, transient failures, or recoverable conflicts by default. Before exposing an error, prefer an explicit product rule, safe automatic recovery, idempotent retry, background continuation, or a user-visible choice that preserves their work.
+- An error is appropriate only for invalid input, an unsafe action, a genuinely ambiguous intent with no safe default, or a failure that cannot be recovered automatically. It must preserve canonical user data, avoid partial or hidden leftovers, explain the outcome plainly, and give one actionable next step.
+- Never silently guess when doing so could lose data, weaken security, or change a public contract. In those cases, surface the decision early and make the trade-off understandable.
 
 ## Global commands and verification
 
@@ -62,7 +75,8 @@ Match verification to the changed boundary. New behavior ships with colocated `b
 - Product and user entry: [README.md](./README.md)
 - Human contribution process: [CONTRIBUTING.md](./CONTRIBUTING.md)
 - Current capability specs: [openspec/specs](./openspec/specs/)
-- Current CLI/API/configuration/development contracts: [docs](./docs/)
+- Public user documentation: [site content](./apps/site/content/docs/)
+- Maintainer documentation and internal APIs: [docs](./docs/)
 - Architecture decisions and lifecycle: [docs/adr/README.md](./docs/adr/README.md)
 - Current agent-integration scope: [agent-integration spec](./openspec/specs/agent-integration/spec.md)
 - Archived changes are provenance only: [openspec/changes/archive](./openspec/changes/archive/)

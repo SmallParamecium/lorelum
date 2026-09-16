@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 
 import { ProcessTimeoutError, runProcess } from "./process.js";
 
-const bunExecutable = Bun.which("bun");
-if (bunExecutable === null) throw new Error("Bun executable is required for process tests.");
+// process.execPath is the real bun binary; Bun.which may resolve to an
+// npm-generated .cmd shim that cannot carry cmd metacharacters in arguments.
+const bunExecutable = process.execPath;
 
 test("collects a completed process result", async () => {
   await expect(runProcess([bunExecutable, "-e", "console.log('ok')"])).resolves.toEqual({

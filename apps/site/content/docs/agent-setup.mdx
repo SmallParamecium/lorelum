@@ -19,7 +19,7 @@ Complete the [Quickstart](./quickstart) first. The CLI and at least one Pack mus
 
 ## Codex
 
-Install the [Codex Plugin](./codex). It supplies the Skill and makes installed Packs discoverable at supported session events, including each Pack's current `packRoot`. The Catalog does not inject Practice bodies or resource contents. The Plugin uses your existing CLI and Store; install those separately.
+Install the [Codex Plugin](./codex). It supplies the Skill and makes installed Packs discoverable at supported session events, including each Pack's readable current `packRoot`. The Catalog does not inject Practice bodies or resource contents. The Plugin uses your existing CLI and Store; install those separately.
 
 ## Claude Code
 
@@ -49,7 +49,7 @@ See [Cursor Skills](https://cursor.com/docs/skills) for host-specific behavior.
 
 Agents that can execute commands can use the same CLI. Install the Skill through the host's supported mechanism. If the host uses project instructions instead, include the Skill's retrieval instructions there.
 
-The essential behavior is to describe the task and current decision in `lore query`, read relevant results with `lore get`, and apply the guidance within its stated conditions. When a retrieved Practice contains a `resource:` link, the installed Skill explains how to resolve it from the returned `packRoot`, read references on demand, copy assets before editing, and explicitly run a script only under task authorization. See [Agent instructions](./agents) for the full execution contract.
+The essential behavior is to describe the task and current decision in `lore query`, read relevant results with `lore get`, and apply the guidance within its stated conditions. When a retrieved Practice contains a `resource:` link, the installed Skill explains how to resolve it from the returned mutable current `packRoot`, read references on demand, copy assets before editing, and explicitly run a script only under task authorization. See [Agent instructions](./agents) for the full execution contract.
 
 ## Verify the integration
 

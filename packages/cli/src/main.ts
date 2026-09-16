@@ -84,7 +84,7 @@ export async function run(arguments_: string[], options: RunOptions = {}): Promi
     if (outputFormat === "text") {
       renderTextFailure(stderr, cliError.code, cliError.message);
     } else {
-      renderFailure(stdout, command, cliError.code, cliError.message);
+      renderFailure(stdout, command, cliError.code, cliError.message, cliError.recovery);
     }
     return cliError.exitCode;
   }

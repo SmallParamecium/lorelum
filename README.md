@@ -16,12 +16,12 @@
 
 ---
 
-> **Public alpha · `0.1.0-alpha.1`.** Prebuilt archives are available for macOS on Apple Silicon, Linux x64, and Windows x64. macOS is Lorelum's priority platform and the most thoroughly validated release target. Linux and Windows are best-effort: compatibility and performance across all distributions, system builds, hardware, and local security policies are not guaranteed. CLI contracts, Pack formats, and indexes may change between releases; automatic migration is not guaranteed.
+> **Public alpha · `0.1.0-alpha.2`.** Prebuilt archives are available for macOS on Apple Silicon, Linux x64, and Windows x64. macOS is Lorelum's priority platform and the most thoroughly validated release target. Linux and Windows are best-effort: compatibility and performance across all distributions, system builds, hardware, and local security policies are not guaranteed. CLI contracts, Pack formats, and indexes may change between releases; automatic migration is not guaranteed.
 
 > **Give your Agent this prompt.**
 >
 > ```text
-> Set up Lorelum v0.1.0-alpha.1 for this project using
+> Set up Lorelum v0.1.0-alpha.2 for this project using
 > https://lorelum.com/en/docs/agents.md. Install the CLI and the agentic-coding
 > Pack, connect the Lorelum Skill for this host, then verify a natural-language
 > query and a full Practice read before using it for work.
@@ -100,13 +100,13 @@ Choose the installer for the host that will run `lore`.
 #### macOS on Apple Silicon and Linux x64
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.2
 ```
 
 #### Windows x64
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.2
 ```
 
 The macOS/Linux installer verifies the archive and creates `~/.local/bin/lore`. The Windows installer verifies the ZIP and creates `$env:LOCALAPPDATA\Lorelum\bin\lore.cmd`. Keep the complete release directory intact: semantic retrieval uses the native libraries and runtime assets shipped with the executable. Do not run `install.sh` or double-click the installer on Windows; run the command above from an already-open PowerShell session so errors stay visible.
@@ -164,9 +164,10 @@ See [Agent integration](https://lorelum.com/en/docs/agent-setup) and [Codex setu
 
 | Official Pack | Version | Focus |
 | --- | --- | --- |
-| `agentic-coding` | `0.3.1` | Planning, implementation, verification, recovery, and delivery decisions |
+| `agentic-coding` | `0.4.0` | Planning, implementation, validation boundaries, recovery, verification, and delivery decisions |
 | `pack-creator` | `0.1.0` | Writing, reviewing, and publishing Practices and Packs |
 | `react-web-craft` | `0.1.0` | React web application design and performance: component state, async data flow, loading, rendering, and composition |
+| `issue-pr-etiquette` | `0.1.0` | Evidence-grounded single-problem Issues, single-scope PRs, review communication, and honest AI-assistance disclosure |
 
 Browse what you have installed:
 

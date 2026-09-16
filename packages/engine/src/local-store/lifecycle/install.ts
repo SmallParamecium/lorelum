@@ -5,6 +5,7 @@ import type { ValidationIssue } from "@lorelum/format";
 
 import { diffEffectivePractices, reconcileEffectivePractices, type PackCandidate } from "../model";
 import { artifactPath, promoteArtifact, sealSnapshot } from "../storage/artifacts/artifact-store";
+import { currentPackRoot, syncCurrentPackLocators } from "../storage/artifacts/current-locator";
 import { createProjection, type SnapshotProjection } from "../storage/artifacts/projection";
 import { writeSnapshotFromCandidate } from "../storage/artifacts/snapshot-writer";
 import {
@@ -109,6 +110,7 @@ export async function installOrUpgrade(
       // Same digest already active → idempotent success, no state change.
       if (existingEntry !== undefined && existingEntry.artifactDigest === artifactDigest) {
         await rm(stagingPath, { recursive: true, force: true });
+        await syncCurrentPackLocators(rootPath, active);
         return Object.freeze({
           generation: recovery.manifest.generation,
           effectiveRevision: recovery.manifest.effectiveRevision,
@@ -116,6 +118,7 @@ export async function installOrUpgrade(
           diagnostics,
           cleanupPending: false,
           artifactDigest,
+          packRoot: currentPackRoot(rootPath, existingEntry.storageKey),
           idempotent: true,
         });
       }
@@ -213,6 +216,7 @@ export async function installOrUpgrade(
           await rm(stagingPath, { recursive: true, force: true });
         }
         await writeManifest(rootPath, targetManifest);
+        await syncCurrentPackLocators(rootPath, targetManifest);
         repository.applyIncrementalDerivedState(
           {
             generation: targetManifest.generation,
@@ -258,6 +262,7 @@ export async function installOrUpgrade(
         diagnostics,
         cleanupPending,
         artifactDigest,
+        packRoot: currentPackRoot(rootPath, entry.storageKey),
         idempotent: false,
       });
     },

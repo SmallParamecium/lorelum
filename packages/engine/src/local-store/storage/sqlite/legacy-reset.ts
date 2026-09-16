@@ -58,7 +58,7 @@ async function isLegacyStore(rootPath: string): Promise<boolean> {
   } catch (error) {
     throw new SqliteStateError("cannot inspect existing LocalStore database", error);
   } finally {
-    database?.close();
+    database?.close(true);
   }
 }
 
@@ -128,7 +128,7 @@ async function publishRebuiltDatabase(rootPath: string, fullRefresh: boolean): P
         "Legacy LocalStore rebuild did not produce a valid snapshot",
       );
     }
-    database.close();
+    connection.close();
     database = undefined;
 
     await discardLegacyDerivedState(rootPath);
@@ -148,7 +148,7 @@ async function publishRebuiltDatabase(rootPath: string, fullRefresh: boolean): P
       "Legacy LocalStore cannot be rebuilt from its manifest and Pack artifacts",
     );
   } finally {
-    database?.close();
+    database?.close(true);
     await rm(stagingPath, { force: true }).catch(() => undefined);
   }
 }

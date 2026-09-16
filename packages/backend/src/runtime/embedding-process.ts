@@ -1,4 +1,5 @@
 import { waitForSettlement } from "../lifecycle/deadline";
+import { createTimeoutSignal } from "../lifecycle/timeout";
 import { llamaArguments } from "./llama-options";
 /* eslint-disable no-await-in-loop -- Child startup and shutdown polling are sequential and bounded. */
 import { spawn } from "node:child_process";
@@ -38,20 +39,19 @@ export function createEmbeddingProcess(
 
   function start(signal: AbortSignal, deadline: number): Promise<void> {
     if (startTask) return startTask;
-    const combined = AbortSignal.any([
-      signal,
-      lifetime.signal,
-      AbortSignal.timeout(Math.max(1, deadline - Date.now())),
-    ]);
-    startTask = launch(combined, deadline).catch((error: unknown) => {
-      if (combined.aborted)
-        throw new EmbeddingError(
-          signal.aborted || lifetime.signal.aborted
-            ? "embedding.busy"
-            : "embedding.deadline-exceeded",
-        );
-      throw error;
-    });
+    const timeout = createTimeoutSignal(Math.max(1, deadline - Date.now()));
+    const combined = AbortSignal.any([signal, lifetime.signal, timeout.signal]);
+    startTask = launch(combined, deadline)
+      .catch((error: unknown) => {
+        if (combined.aborted)
+          throw new EmbeddingError(
+            signal.aborted || lifetime.signal.aborted
+              ? "embedding.busy"
+              : "embedding.deadline-exceeded",
+          );
+        throw error;
+      })
+      .finally(() => timeout.dispose());
     return startTask;
   }
   async function launch(signal: AbortSignal, deadline: number) {
@@ -99,19 +99,21 @@ export function createEmbeddingProcess(
       while (Date.now() < deadline && owned.exitCode === null && owned.signalCode === null) {
         signal.throwIfAborted();
         try {
-          const probeSignal = AbortSignal.any([
-            signal,
-            AbortSignal.timeout(
-              Math.min(STARTUP_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
-            ),
-          ]);
+          const probeTimeout = createTimeoutSignal(
+            Math.min(STARTUP_PROBE_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+          );
+          const probeSignal = AbortSignal.any([signal, probeTimeout.signal]);
           // Native /health is unauthenticated; it cannot establish this process's readiness.
-          await candidate.encode("hello", probeSignal);
-          await resources.assertUnchanged();
-          signal.throwIfAborted();
-          if (owned.exitCode !== null || owned.signalCode !== null) break;
-          client = candidate;
-          return;
+          try {
+            await candidate.encode("hello", probeSignal);
+            await resources.assertUnchanged();
+            signal.throwIfAborted();
+            if (owned.exitCode !== null || owned.signalCode !== null) break;
+            client = candidate;
+            return;
+          } finally {
+            probeTimeout.dispose();
+          }
         } catch (error) {
           if (error instanceof EmbeddingError && error.code === "embedding.resource-invalid")
             throw error;

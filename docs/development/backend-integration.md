@@ -8,15 +8,20 @@
 bun packages/backend/integration/embedding.integration.ts /absolute/path/to/granite-q4_0.gguf
 bun packages/backend/integration/daemon-embedding.integration.ts /absolute/path/to/granite-q4_0.gguf
 bun packages/backend/integration/model-download.integration.ts /absolute/path/to/granite-q4_0.gguf
+bun run build:native
+bun run test:native-smoke -- /absolute/path/to/granite-q4_0.gguf
 ```
 
 | 入口 | Review 时关注的场景 |
 | --- | --- |
 | `embedding.integration.ts` | HTTP 认证调用、占用编码槽时的控制响应与 busy 拒绝、重复加载/卸载 |
-| `daemon-embedding.integration.ts` | 常驻进程复用、native 无响应回收、native 崩溃、daemon 崩溃后的子进程回收和重启 |
+| `daemon-embedding.integration.ts` | 常驻进程复用、native 无响应回收、native 崩溃、daemon 崩溃后的子进程回收和重启，以及 current CLI 对 protocol-mismatched daemon/native child 的 graceful 与 force 回收 |
 | `model-download.integration.ts` | 本地传输在 1 MiB 后断开，按真实落盘偏移续传，校验后编码并复用缓存 |
+| `project-context-native-smoke.integration.ts` | 通过 CLI command registry、真实 HTTP Backend 和 native 模型验证普通目录 ProjectContext：空模型 cache 首次 query、`maxWaitMs: 0`、partial/strict/complete semantic result、目录语料复用、单条增量、rebuild、cache prune、model unload/reload 和坏 Practice fallback |
 
 每个入口先组装环境，再调用命名场景，最后清理自己拥有的资源。`integration/support/` 只放重复的 native fixture、进程等待/RSS 采样、断流服务器和冻结参考比较，不包含业务实现。
+
+`test:native-smoke` 的 Store、ProjectContext、derived cache、Backend journal 和模型 cache 都在临时目录；它以调用方提供的模型文件作为只读本地下载源，不访问网络，也不启动、停止或复用用户 Backend。该 smoke 输出单机 `observations`，用于发现功能回归和保留可比较样本，不设置跨机器的性能通过阈值。
 
 busy 场景通过编码入口的显式同步点占住请求，不依靠 sleep 猜测推理耗时；daemon 无响应场景暂停本次启动的 native 进程，让请求确定超时，再确认实际进程退出。这些是故障注入，不是性能测量。daemon 端口仍由现有 supervisor 合同决定，端口竞争会明确失败，不会改绑未知服务。
 

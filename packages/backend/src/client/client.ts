@@ -1,6 +1,7 @@
 /* eslint-disable no-await-in-loop -- Model loading polls one shared operation without a transfer deadline. */
 import type { z } from "zod";
 import { readBoundedJson } from "../http/read-json";
+import { createTimeoutSignal } from "../lifecycle/timeout";
 import { randomBytes } from "node:crypto";
 
 import {
@@ -22,6 +23,7 @@ import {
   queryRequestSchema,
   queryResultSchema,
   type BackendQueryResult,
+  type ProjectContextTargetRequest,
   type QueryMode,
 } from "../modules/query/model";
 import {
@@ -43,19 +45,32 @@ import {
   indexMutationSchema,
   indexOperationParamsSchema,
   indexOperationSchema,
+  indexStatusQuerySchema,
   indexStatusSchema,
   type IndexOperation,
   type IndexStatus,
+  type ProjectIndexRequest,
 } from "../modules/index/model";
 import { ENCODING_ID } from "../modules/embedding/model";
 import type { EmbeddingResult } from "../modules/embedding/model";
 import { DEFAULT_BACKEND_SETTINGS } from "../config/model";
 import type { QueryRequest, StorageRoot } from "@lorelum/engine";
 
-export type BackendQueryRequest = QueryRequest & { readonly mode?: QueryMode };
+export type BackendQueryRequest = QueryRequest & {
+  readonly mode?: QueryMode;
+  readonly projectContext?: ProjectContextTargetRequest;
+  readonly cacheRoot?: string;
+  readonly maxWaitMs?: number;
+  readonly minCoveragePercent?: number;
+};
 export interface BackendRequestOptions {
   readonly signal?: AbortSignal | undefined;
   readonly deadline?: number | undefined;
+}
+
+export interface BackendIndexRequestOptions extends BackendRequestOptions {
+  readonly projectContext?: ProjectIndexRequest;
+  readonly cacheRoot?: string;
 }
 
 export interface CreateBackendClientOptions {
@@ -70,6 +85,8 @@ export interface CreateBackendClientOptions {
   readonly startupTimeoutMs?: number;
   /** Timeout budget for unloading the embedding model. */
   readonly shutdownTimeoutMs?: number;
+  /** Internal compatibility-test override; released clients always use PROTOCOL_VERSION. */
+  readonly protocolVersion?: number;
 }
 
 export interface BackendClient {
@@ -90,9 +107,9 @@ export interface BackendClient {
     request: BackendQueryRequest,
     options?: BackendRequestOptions,
   ): Promise<BackendQueryResult>;
-  indexStatus(root: StorageRoot, options?: BackendRequestOptions): Promise<IndexStatus>;
-  buildIndex(root: StorageRoot, options?: BackendRequestOptions): Promise<IndexOperation>;
-  rebuildIndex(root: StorageRoot, options?: BackendRequestOptions): Promise<IndexOperation>;
+  indexStatus(root: StorageRoot, options?: BackendIndexRequestOptions): Promise<IndexStatus>;
+  buildIndex(root: StorageRoot, options?: BackendIndexRequestOptions): Promise<IndexOperation>;
+  rebuildIndex(root: StorageRoot, options?: BackendIndexRequestOptions): Promise<IndexOperation>;
   indexOperation(operationId: string, options?: BackendRequestOptions): Promise<IndexOperation>;
 }
 
@@ -140,10 +157,13 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
   const timeoutMs = options.timeoutMs ?? DEFAULT_BACKEND_SETTINGS.requestTimeoutMs;
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_BACKEND_SETTINGS.startupTimeoutMs;
   const shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_BACKEND_SETTINGS.shutdownTimeoutMs;
+  const protocolVersion = options.protocolVersion ?? PROTOCOL_VERSION;
   for (const timeout of [timeoutMs, startupTimeoutMs, shutdownTimeoutMs]) {
     if (!Number.isInteger(timeout) || timeout < 1)
       throw new TypeError("Timeout must be a positive integer");
   }
+  if (!Number.isSafeInteger(protocolVersion) || protocolVersion < 1)
+    throw new TypeError("Protocol version must be a positive integer");
   let expectedEncodingId: string | undefined;
   const baseUrl = validatedLoopbackUrl(options.baseUrl ?? BACKEND_URL);
 
@@ -153,35 +173,41 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
     requestTimeoutMs = timeoutMs,
   ): Promise<unknown> => {
     const url = new URL(path, baseUrl);
-    const timeoutSignal = AbortSignal.timeout(requestTimeoutMs);
-    const signal = init.signal ? AbortSignal.any([timeoutSignal, init.signal]) : timeoutSignal;
-    const response = await fetch(url, {
-      ...init,
-      redirect: "error",
-      proxy: "",
-      signal,
-      headers: { host: baseUrl.host, ...init.headers },
-    }).catch((error: unknown) => {
-      if (init.signal?.aborted) throw init.signal.reason;
-      if (isTimeout(error)) {
-        throw new BackendError("backend.deadline-exceeded", { cause: error });
-      }
-      throw new BackendError("backend.unavailable", { cause: error });
-    });
-    const body = await readBoundedJson(response, MAX_RESPONSE_BYTES).catch((error: unknown) => {
-      if (init.signal?.aborted) throw init.signal.reason;
-      throw new BackendError(
-        timeoutSignal.aborted ? "backend.deadline-exceeded" : "backend.failed",
-        {
-          cause: error,
-        },
-      );
-    });
-    if (!response.ok) throw remoteError(body) ?? new BackendError("backend.failed");
-    return body;
+    const timeout = createTimeoutSignal(requestTimeoutMs, init.signal ?? undefined);
+    try {
+      const response = await fetch(url, {
+        ...init,
+        redirect: "error",
+        proxy: "",
+        signal: timeout.signal,
+        headers: { host: baseUrl.host, ...init.headers },
+      }).catch((error: unknown) => {
+        if (init.signal?.aborted) throw init.signal.reason;
+        if (timeout.timedOut() || isTimeout(error)) {
+          throw new BackendError("backend.deadline-exceeded", { cause: error });
+        }
+        throw new BackendError("backend.unavailable", { cause: error });
+      });
+      const body = await readBoundedJson(response, MAX_RESPONSE_BYTES).catch((error: unknown) => {
+        if (init.signal?.aborted) throw init.signal.reason;
+        throw new BackendError(
+          timeout.timedOut() ? "backend.deadline-exceeded" : "backend.failed",
+          {
+            cause: error,
+          },
+        );
+      });
+      if (!response.ok) throw remoteError(body) ?? new BackendError("backend.failed");
+      return body;
+    } finally {
+      timeout.dispose();
+    }
   };
 
-  const identify = async (requestOptions: BackendRequestOptions = {}): Promise<BackendIdentity> => {
+  const identify = async (
+    requestOptions: BackendRequestOptions = {},
+    allowCurrentBuildMismatch = false,
+  ): Promise<BackendIdentity> => {
     const nonce = randomBytes(32).toString("hex");
     const body = await send(
       `${BACKEND_ROUTES.identity}?nonce=${nonce}`,
@@ -196,12 +222,13 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
     }
     if (
       identity.instanceId !== options.identity.instanceId ||
-      identity.buildIdentity !== options.identity.buildIdentity ||
-      identity.buildIdentity !== options.buildIdentity ||
-      identity.protocolVersion !== PROTOCOL_VERSION
-    ) {
-      throw new BackendError("backend.incompatible");
-    }
+      identity.buildIdentity !== options.identity.buildIdentity
+    )
+      throw new BackendError("backend.state-invalid");
+    if (identity.protocolVersion !== protocolVersion)
+      throw new BackendError("backend.protocol-mismatch");
+    if (!allowCurrentBuildMismatch && identity.buildIdentity !== options.buildIdentity)
+      throw new BackendError("backend.build-mismatch");
     return parsed.data;
   };
 
@@ -215,16 +242,18 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
       timeout = timeoutMs,
       signal,
       deadline,
+      allowCurrentBuildMismatch = false,
     }: {
       payload?: unknown;
       method?: "GET" | "POST";
       timeout?: number;
       signal?: AbortSignal | undefined;
       deadline?: number | undefined;
+      allowCurrentBuildMismatch?: boolean;
     } = {},
   ): Promise<T> => {
     const budget = { signal, deadline: deadline ?? Date.now() + timeout };
-    await identify(budget);
+    await identify(budget, allowCurrentBuildMismatch);
     const headers: Record<string, string> = { authorization: `Bearer ${options.secret}` };
     const init: RequestInit = { method, headers, signal: signal ?? null };
     if (payload !== undefined) {
@@ -244,9 +273,14 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
     return Math.max(1, Math.ceil(value));
   }
 
-  const control = async (path: string, method: "GET" | "POST" = "GET"): Promise<BackendStatus> => {
+  const control = async (
+    path: string,
+    method: "GET" | "POST" = "GET",
+    allowCurrentBuildMismatch = false,
+  ): Promise<BackendStatus> => {
     const result = await request(path, statusSchema, {
       method,
+      allowCurrentBuildMismatch,
     });
     if (
       result.instanceId !== options.identity.instanceId ||
@@ -278,7 +312,7 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
   return Object.freeze({
     identity: identify,
     status: () => control(BACKEND_ROUTES.status),
-    stop: () => control(BACKEND_ROUTES.stop, "POST"),
+    stop: () => control(BACKEND_ROUTES.stop, "POST", true),
     async loadModel({ onProgress } = {}) {
       let result = await modelRequest(BACKEND_ROUTES.modelLoad, { payload: {} });
       // Explicit load admits retries; automatic admission only joins/starts a nonfailed task.
@@ -336,17 +370,51 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
       return request(BACKEND_ROUTES.query, queryResultSchema, { payload, ...requestOptions });
     },
     async indexStatus(root, requestOptions) {
-      const payload = { storageRoot: root.rootPath };
-      if (!indexMutationSchema.safeParse(payload).success)
+      const payload = {
+        storageRoot: root.rootPath,
+        ...(requestOptions?.projectContext !== undefined
+          ? {
+              ...(requestOptions.projectContext.projectRoot === undefined
+                ? {}
+                : { projectRoot: requestOptions.projectContext.projectRoot }),
+              ...(requestOptions.projectContext.startDirectory === undefined
+                ? {}
+                : { projectStartDirectory: requestOptions.projectContext.startDirectory }),
+              cacheRoot: requestOptions.projectContext.cacheRoot,
+            }
+          : requestOptions?.cacheRoot === undefined
+            ? {}
+            : { cacheRoot: requestOptions.cacheRoot }),
+      };
+      if (!indexStatusQuerySchema.safeParse(payload).success)
         throw new BackendError("backend.invalid-request");
+      const search = new URLSearchParams({ storageRoot: root.rootPath });
+      if (requestOptions?.projectContext !== undefined) {
+        if (requestOptions.projectContext.projectRoot !== undefined) {
+          search.set("projectRoot", requestOptions.projectContext.projectRoot);
+        }
+        if (requestOptions.projectContext.startDirectory !== undefined) {
+          search.set("projectStartDirectory", requestOptions.projectContext.startDirectory);
+        }
+        search.set("cacheRoot", requestOptions.projectContext.cacheRoot);
+      } else if (requestOptions?.cacheRoot !== undefined) {
+        search.set("cacheRoot", requestOptions.cacheRoot);
+      }
       return request(
-        `${BACKEND_ROUTES.indexStatus}?storageRoot=${encodeURIComponent(root.rootPath)}`,
+        `${BACKEND_ROUTES.indexStatus}?${search.toString()}`,
         indexStatusSchema,
         requestOptions,
       );
     },
     async buildIndex(root, requestOptions) {
-      const payload = { storageRoot: root.rootPath };
+      const payload = {
+        storageRoot: root.rootPath,
+        ...(requestOptions?.projectContext !== undefined
+          ? { projectContext: requestOptions.projectContext }
+          : requestOptions?.cacheRoot === undefined
+            ? {}
+            : { cacheRoot: requestOptions.cacheRoot }),
+      };
       if (!indexMutationSchema.safeParse(payload).success)
         throw new BackendError("backend.invalid-request");
       return request(BACKEND_ROUTES.indexBuild, indexOperationSchema, {
@@ -355,7 +423,14 @@ export function createBackendClient(options: CreateBackendClientOptions): Backen
       });
     },
     async rebuildIndex(root, requestOptions) {
-      const payload = { storageRoot: root.rootPath };
+      const payload = {
+        storageRoot: root.rootPath,
+        ...(requestOptions?.projectContext !== undefined
+          ? { projectContext: requestOptions.projectContext }
+          : requestOptions?.cacheRoot === undefined
+            ? {}
+            : { cacheRoot: requestOptions.cacheRoot }),
+      };
       if (!indexMutationSchema.safeParse(payload).success)
         throw new BackendError("backend.invalid-request");
       return request(BACKEND_ROUTES.indexRebuild, indexOperationSchema, {

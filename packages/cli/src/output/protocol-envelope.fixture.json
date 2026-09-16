@@ -1,14 +1,14 @@
 [
   {
     "protocolVersion": 1,
-    "toolVersion": "0.1.0-alpha.1",
+    "toolVersion": "0.1.0-alpha.2",
     "command": "fixture.success",
     "ok": true,
     "data": {}
   },
   {
     "protocolVersion": 1,
-    "toolVersion": "0.1.0-alpha.1",
+    "toolVersion": "0.1.0-alpha.2",
     "command": "fixture.failure",
     "ok": false,
     "error": {

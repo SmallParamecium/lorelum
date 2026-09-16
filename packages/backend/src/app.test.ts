@@ -3,17 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  createLocalStore,
-  createQueryService,
-  type QueryService,
-  type SemanticQueryService,
-} from "@lorelum/engine";
+import { createLocalStore, createQueryService, type QueryService } from "@lorelum/engine";
 
 import { createPackCandidate } from "../../engine/src/local-store/model/candidate";
 
 import { createBackendApp } from "./app";
 import { createBackendService } from "./modules/backend/service";
+import { createContentAddressedSemanticRuntimeStub } from "./modules/query/content-addressed-semantic-runtime.test-helper";
 
 const identity = Object.freeze({
   instanceId: "test-instance",
@@ -56,25 +52,12 @@ function app(
   instanceIdentity: typeof identity = identity,
   isReady: () => boolean = () => true,
   onStopFailure: (error: unknown) => void = () => undefined,
-  semanticQueryService?: SemanticQueryService,
 ) {
   const keyword = keywordQueryService ?? {
     async query() {
       return { mode: "keyword", results: [] } as const;
     },
   };
-  const semantic =
-    semanticQueryService ??
-    ({
-      async query() {
-        return {
-          mode: "semantic",
-          profileId: "a".repeat(64),
-          coverage: "complete",
-          results: [],
-        } as const;
-      },
-    } satisfies SemanticQueryService);
   return createBackendApp({
     backend: createBackendService({
       identity: instanceIdentity,
@@ -84,7 +67,7 @@ function app(
       isReady,
     }),
     keywordQueryService: keyword,
-    semanticQueryService: semantic,
+    semanticRuntime: createContentAddressedSemanticRuntimeStub(),
   });
 }
 

@@ -15,7 +15,7 @@ At the start of each new engineering task, first check whether the current conte
 lore pack list --details
 ```
 
-Use each Pack's description and declared stack scope as relevance hints, not as complete guidance or a hard filter. Each Catalog entry also includes its current `packRoot`, a local locator for that Pack's installed artifact. Keep this catalog for the task; do not rerun it before every edit, command, or ordinary reply. Refresh it only when the task scope changes materially, the Store may have changed, or discovery output was incomplete.
+Use each Pack's description and declared stack scope as relevance hints, not as complete guidance or a hard filter. Each Catalog entry also includes its current `packRoot`, a directly readable `current` view rather than an internal artifact path. Keep this catalog for the task; do not rerun it before every edit, command, or ordinary reply. Refresh it only when the task scope changes materially, the Store may have changed, or discovery output was incomplete.
 
 ## Use semantic retrieval for material decisions
 
@@ -45,6 +45,6 @@ Treat this as task routing, not as a file-access allowlist. The Catalog can supp
 - Copy an `assets/` file to the task's working destination before filling in or changing it; do not treat the installed Pack as a writable work directory.
 - Run a `scripts/` file only when the current task authorizes it and the Practice explains why it helps. `lore` does not run Pack scripts during install, validation, query, listing, get, indexing, or recovery.
 
-When a Practice has multiple sources, keep their `packRoot` values distinct. Do not silently mix resources from different Packs or pick one source without a reason. A Pack update can replace an artifact, so if a previously returned `packRoot` is unavailable, run `lore get` or `lore pack list` again to obtain the current locator.
+When a Practice has multiple sources, keep their `packRoot` values distinct. Do not silently mix resources from different Packs or pick one source without a reason. `packRoot` is a mutable current view: a Pack update can make the same path resolve to new bytes, and removal can make it unavailable. After a relevant mutation, run `lore get` or `lore pack list` again before treating a resource as belonging to the selected source.
 
 The default query is semantic. Do not skip a ready semantic query solely because of expected latency. Do not run backend, model, index, or status commands before this query. Only after the query itself returns a preparation state or an error, read [semantic query recovery](references/semantic-query-recovery.md), follow the relevant recovery path, then retry the same query. Do not silently substitute keyword results for a failed or empty semantic query; use `--mode keyword` only for an intentional offline lookup or semantic-runtime diagnosis. Do not query before every edit, command, or ordinary reply.

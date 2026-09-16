@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { removePackSources } from "../model";
 import { artifactPath } from "../storage/artifacts/artifact-store";
+import { removeCurrentPackLocator } from "../storage/artifacts/current-locator";
 import {
   clearOperationJournal,
   createOperationJournalRecord,
@@ -74,6 +75,7 @@ export async function uninstallPack(
       const journal = createOperationJournalRecord("uninstall", active, targetManifest);
       await writeOperationJournal(rootPath, journal);
       await writeManifest(rootPath, targetManifest);
+      await removeCurrentPackLocator(rootPath, entry.storageKey);
       repository.applyIncrementalDerivedState(
         {
           generation: targetManifest.generation,

@@ -7,6 +7,7 @@ import { createBackendClient, type BackendClient } from "../src/client/client";
 import { readRecord } from "../src/runtime/runtime-state";
 import { isSameProcess, type ProcessIdentity } from "../src/runtime/process-identity";
 import { DEFAULT_BACKEND_SETTINGS } from "../src/config/model";
+import { PROTOCOL_VERSION } from "../src/protocol/constants";
 import { modelPathFromArgs } from "./support/native";
 import { suspendProcess, waitUntil, waitForProcessExit } from "./support/process";
 
@@ -44,6 +45,8 @@ try {
   await verifyUnresponsiveNativeRecovery(client);
   await verifyNativeCrashRecovery(client);
   await verifyDaemonCrashRecovery(client, daemon);
+  await verifyProtocolMismatchLifecycleRecovery();
+  await verifyProtocolMismatchForceRecovery();
   console.log(
     JSON.stringify({
       scenario: "daemon-lifecycle",
@@ -52,6 +55,8 @@ try {
       timeoutRecycled: true,
       crashRecovered: true,
       parentDeathRecycled: true,
+      protocolMismatchRecovered: true,
+      protocolMismatchForceRecovered: true,
       restartClean: true,
     }),
   );
@@ -128,5 +133,67 @@ async function verifyDaemonCrashRecovery(client: BackendClient, daemon: ProcessI
     await readRecord(runtimeDirectory),
     undefined,
     "Stop must clear the owned runtime record",
+  );
+}
+
+function oldProtocolSupervisor() {
+  return createBackendSupervisor({
+    config: {
+      runtimeDirectory,
+      embedding: { modelPath },
+      settings: { ...DEFAULT_BACKEND_SETTINGS, requestTimeoutMs: 100, shutdownTimeoutMs: 1000 },
+    },
+    command: [process.execPath, join(import.meta.dir, "daemon.ts")],
+    buildIdentity,
+    baseUrl,
+    protocolVersion: PROTOCOL_VERSION - 1,
+  });
+}
+
+async function oldProtocolClient(): Promise<BackendClient> {
+  const daemon = await readRecord(runtimeDirectory);
+  assert(daemon, "Old-protocol daemon must publish its runtime record");
+  return createBackendClient({
+    identity: daemon,
+    secret: daemon.secret,
+    buildIdentity,
+    baseUrl,
+    timeoutMs: 3000,
+    protocolVersion: PROTOCOL_VERSION - 1,
+  });
+}
+
+async function verifyProtocolMismatchLifecycleRecovery() {
+  const old = oldProtocolSupervisor();
+  await old.start();
+  await (await oldProtocolClient()).loadModel();
+  const daemon = await readRecord(runtimeDirectory);
+  assert(daemon, "Old-protocol daemon must remain recorded while its model is loaded");
+  const child = await nativeIdentity();
+  await supervisor.stop();
+  await waitForProcessExit(daemon);
+  await waitForProcessExit(child);
+  assert.equal(
+    await readRecord(runtimeDirectory),
+    undefined,
+    "Verified graceful protocol-mismatch recovery must remove the ownership record",
+  );
+}
+
+async function verifyProtocolMismatchForceRecovery() {
+  const old = oldProtocolSupervisor();
+  await old.start();
+  await (await oldProtocolClient()).loadModel();
+  const daemon = await readRecord(runtimeDirectory);
+  assert(daemon, "Old-protocol daemon must remain recorded while its model is loaded");
+  const child = await nativeIdentity();
+  await suspendProcess(daemon.pid);
+  await supervisor.stop();
+  await waitForProcessExit(daemon);
+  await waitForProcessExit(child);
+  assert.equal(
+    await readRecord(runtimeDirectory),
+    undefined,
+    "Verified forced protocol-mismatch recovery must remove the ownership record",
   );
 }

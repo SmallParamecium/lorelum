@@ -15,6 +15,10 @@ import {
 } from "../model";
 import { artifactPath, calculateArtifactDigest } from "../storage/artifacts/artifact-store";
 import {
+  CurrentPackLocatorRepairNeededError,
+  verifiedCurrentPackRoot,
+} from "../storage/artifacts/current-locator";
+import {
   parseProjection,
   PROJECTION_RELATIVE_PATH,
   type SnapshotProjection,
@@ -182,7 +186,10 @@ async function verifyArtifactsAndSources(
           digest: practice.contentDigest,
         });
       }
-      return Object.freeze({ pack: projection.pack, packRoot: artifactDir });
+      return Object.freeze({
+        pack: projection.pack,
+        packRoot: await verifiedCurrentPackRoot(rootPath, entry),
+      });
     }),
   );
 
@@ -227,11 +234,11 @@ async function verifyEffectivePracticeSources(
     }
     const check = (async () => {
       try {
-        const packRoot = artifactPath(rootPath, entry.storageKey, entry.artifactDigest);
-        if ((await calculateArtifactDigest(packRoot)) !== entry.artifactDigest) {
+        const artifactRoot = artifactPath(rootPath, entry.storageKey, entry.artifactDigest);
+        if ((await calculateArtifactDigest(artifactRoot)) !== entry.artifactDigest) {
           throw new StoreRecoveryRequiredError(`artifact digest mismatch for ${entry.storageKey}`);
         }
-        const projection = await readSealedProjection(packRoot);
+        const projection = await readSealedProjection(artifactRoot);
         if (
           projection.pack.name !== entry.packName ||
           projection.pack.version !== entry.packVersion
@@ -240,9 +247,17 @@ async function verifyEffectivePracticeSources(
             `projection metadata differs from the manifest for ${entry.storageKey}`,
           );
         }
-        return Object.freeze({ packRoot, projection });
+        return Object.freeze({
+          packRoot: await verifiedCurrentPackRoot(rootPath, entry),
+          projection,
+        });
       } catch (error) {
-        if (error instanceof StoreRecoveryRequiredError) throw error;
+        if (
+          error instanceof StoreRecoveryRequiredError ||
+          error instanceof CurrentPackLocatorRepairNeededError
+        ) {
+          throw error;
+        }
         throw new StoreRecoveryRequiredError(
           `cannot verify sealed artifact for ${entry.storageKey}`,
         );
@@ -435,6 +450,10 @@ async function readWithJournalRecovery<T>(rootPath: string, read: () => Promise<
       await reclaimStaleMutationLock(rootPath);
       return result;
     } catch (error) {
+      if (error instanceof CurrentPackLocatorRepairNeededError && recoveryAttempt === 0) {
+        await repairCurrentPackLocators(rootPath);
+        continue;
+      }
       if (
         error instanceof StoreRecoveryRequiredError &&
         recoveryAttempt === 0 &&
@@ -449,6 +468,21 @@ async function readWithJournalRecovery<T>(rootPath: string, read: () => Promise<
     }
   }
   throw new StoreRecoveryRequiredError("LocalStore recovery did not converge");
+}
+
+/** Repair a derived locator only after the canonical Store state is converged. */
+async function repairCurrentPackLocators(rootPath: string): Promise<void> {
+  const lock = await acquireMutationLock(rootPath);
+  let repository: LocalStoreRepository | undefined;
+  try {
+    repository = await openStoreForLifecycle(rootPath);
+    await runStoreRecovery(rootPath, repository);
+  } catch (error) {
+    return translateStoreErrors(error);
+  } finally {
+    repository?.close();
+    await lock.release();
+  }
 }
 
 /**

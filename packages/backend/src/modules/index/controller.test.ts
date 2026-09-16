@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 
-import type { QueryService, SemanticQueryService } from "@lorelum/engine";
+import type { QueryService, StorageRoot } from "@lorelum/engine";
 
 import { createBackendApp } from "../../app";
 import { createBackendService } from "../backend/service";
 import { EmbeddingError } from "../embedding/errors";
 import { StoreBusyError } from "@lorelum/engine";
-import type { IndexOperationService } from "./operation-service";
+import type { ContentAddressedSemanticRuntimePort } from "../query/content-addressed-semantic-runtime";
+import { createContentAddressedSemanticRuntimeStub } from "../query/content-addressed-semantic-runtime.test-helper";
+import type { IndexOperation, IndexStatus } from "./model";
 
 const identity = Object.freeze({
   instanceId: "test-instance",
@@ -17,6 +19,14 @@ const secret = "index-controller-test-secret";
 const operationId = "0f8fad5b-d9cb-469f-a165-70867728950e";
 const profileId = "a".repeat(64);
 
+interface IndexOperationStub {
+  status(root: StorageRoot): Promise<IndexStatus>;
+  build(root: StorageRoot): IndexOperation;
+  rebuild(root: StorageRoot): IndexOperation;
+  operation(operationId: string): IndexOperation | undefined;
+  waitForIdle(deadline?: number): Promise<void>;
+}
+
 function request(path: string, init: RequestInit = {}): Request {
   return new Request(`http://127.0.0.1${path}`, {
     ...init,
@@ -24,22 +34,38 @@ function request(path: string, init: RequestInit = {}): Request {
   });
 }
 
-function app(indexOperations: IndexOperationService) {
+function app(
+  indexOperations: IndexOperationStub,
+  semanticRuntime?: ContentAddressedSemanticRuntimePort,
+) {
   const keywordQueryService: QueryService = {
     async query() {
       return { mode: "keyword", results: [] };
     },
   };
-  const semanticQueryService: SemanticQueryService = {
-    async query() {
-      return { mode: "semantic", profileId, coverage: "complete", results: [] };
-    },
-  };
+  const runtime =
+    semanticRuntime ??
+    createContentAddressedSemanticRuntimeStub({
+      async indexStatus(root) {
+        return indexOperations.status(root);
+      },
+      async build(root) {
+        return indexOperations.build(root);
+      },
+      async rebuild(root) {
+        return indexOperations.rebuild(root);
+      },
+      async indexOperation(operationId) {
+        return indexOperations.operation(operationId);
+      },
+      async waitForIdle(deadline) {
+        await indexOperations.waitForIdle(deadline);
+      },
+    });
   return createBackendApp({
     backend: createBackendService({ identity, secret, onStop: () => undefined }),
     keywordQueryService,
-    semanticQueryService,
-    indexOperations,
+    semanticRuntime: runtime,
   });
 }
 
@@ -181,4 +207,171 @@ test("status preserves Store availability errors", async () => {
   expect(await response.json()).toEqual({
     error: { code: "store.busy", message: "The local Pack store is busy." },
   });
+});
+
+test("project index routes use the supplied context without changing the Store selection", async () => {
+  const projectRoot = "/tmp/project-index-controller";
+  const cacheRoot = "/tmp/project-index-cache";
+  const calls: unknown[] = [];
+  const instance = app(
+    {
+      status: async () => {
+        throw new Error("Store route must not be used for ProjectContext");
+      },
+      build: () => {
+        throw new Error("Store route must not be used for ProjectContext");
+      },
+      rebuild: () => {
+        throw new Error("Store route must not be used for ProjectContext");
+      },
+      operation: () => undefined,
+      waitForIdle: async () => undefined,
+    },
+    {
+      async indexStatus(root, target) {
+        calls.push(["status", root, target]);
+        return {
+          state: "indexing",
+          profileId,
+          operationId,
+          indexedPracticeCount: 50,
+          totalPracticeCount: 100,
+        };
+      },
+      async build(root, target) {
+        calls.push(["build", root, target]);
+        return {
+          operationId,
+          state: "queued",
+          indexedPracticeCount: 0,
+          totalPracticeCount: 100,
+        };
+      },
+      async rebuild(root, target) {
+        calls.push(["rebuild", root, target]);
+        return {
+          operationId,
+          state: "queued",
+          indexedPracticeCount: 0,
+          totalPracticeCount: 100,
+        };
+      },
+      async indexOperation() {
+        return undefined;
+      },
+      async query() {
+        throw new Error("query is outside this index-controller test");
+      },
+      async waitForIdle() {},
+    },
+  );
+
+  const statusResponse = await instance.handle(
+    request(
+      `/internal/v1/index/status?storageRoot=/tmp/index-controller&projectRoot=${encodeURIComponent(projectRoot)}&cacheRoot=${encodeURIComponent(cacheRoot)}`,
+    ),
+  );
+  expect(statusResponse.status).toBe(200);
+  expect(await statusResponse.json()).toEqual({
+    state: "indexing",
+    profileId,
+    operationId,
+    indexedPracticeCount: 50,
+    totalPracticeCount: 100,
+  });
+
+  const buildResponse = await instance.handle(
+    request("/internal/v1/index/build", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        storageRoot: "/tmp/index-controller",
+        projectContext: { projectRoot, cacheRoot },
+      }),
+    }),
+  );
+  expect(buildResponse.status).toBe(202);
+  expect(await buildResponse.json()).toEqual({
+    operationId,
+    state: "queued",
+    indexedPracticeCount: 0,
+    totalPracticeCount: 100,
+  });
+  expect(calls).toEqual([
+    ["status", { rootPath: "/tmp/index-controller" }, { kind: "project", projectRoot, cacheRoot }],
+    ["build", { rootPath: "/tmp/index-controller" }, { kind: "project", projectRoot, cacheRoot }],
+  ]);
+});
+
+test("Store cache routes use the common target runtime", async () => {
+  const calls: unknown[] = [];
+  const instance = app(
+    {
+      async status() {
+        throw new Error("legacy Store status must not run");
+      },
+      build() {
+        throw new Error("legacy Store build must not run");
+      },
+      rebuild() {
+        throw new Error("legacy Store rebuild must not run");
+      },
+      operation() {
+        return undefined;
+      },
+      waitForIdle: async () => undefined,
+    },
+    {
+      async indexStatus(root, target) {
+        calls.push(["status", root, target]);
+        return {
+          state: "indexing",
+          profileId,
+          operationId,
+          indexedPracticeCount: 50,
+          totalPracticeCount: 100,
+        };
+      },
+      async build(root, target) {
+        calls.push(["build", root, target]);
+        return { operationId, state: "queued", indexedPracticeCount: 0, totalPracticeCount: 100 };
+      },
+      async rebuild() {
+        throw new Error("unexpected rebuild");
+      },
+      async indexOperation() {
+        return undefined;
+      },
+      async query() {
+        throw new Error("query is outside this index-controller test");
+      },
+      async waitForIdle() {},
+    },
+  );
+  const statusResponse = await instance.handle(
+    request(
+      "/internal/v1/index/status?storageRoot=/tmp/index-controller&cacheRoot=/tmp/index-cache",
+    ),
+  );
+  expect(statusResponse.status).toBe(200);
+  const buildResponse = await instance.handle(
+    request("/internal/v1/index/build", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ storageRoot: "/tmp/index-controller", cacheRoot: "/tmp/index-cache" }),
+    }),
+  );
+  expect(buildResponse.status).toBe(202);
+  expect(calls).toEqual([
+    [
+      "status",
+      { rootPath: "/tmp/index-controller" },
+      { kind: "store", cacheRoot: "/tmp/index-cache" },
+    ],
+    [
+      "build",
+      { rootPath: "/tmp/index-controller" },
+      { kind: "store", cacheRoot: "/tmp/index-cache" },
+    ],
+  ]);
 });

@@ -13,18 +13,18 @@ Use the installer for the host that will run the CLI. The public alpha is a prer
 ### macOS on Apple Silicon and Linux x64
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.2
 ```
 
 ### Windows x64
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.2
 ```
 
 Do not run `install.sh` or double-click the installer on Windows. The Windows installer is PowerShell-only and creates a `lore.cmd` shim; run it from an already-open PowerShell session so an error remains visible.
 
-This installs `0.1.0-alpha.1`. Both installers look for a stable release when the version argument is omitted.
+This installs `0.1.0-alpha.2`. Both installers look for a stable release when the version argument is omitted.
 
 Both installers download the matching release archive and `SHA256SUMS`, then verify the archive's SHA-256. macOS and Linux install the full release under `~/.local/share/lorelum/versions/`, with `~/.local/bin/lore` as the command entrypoint. Windows installs under `$env:LOCALAPPDATA\Lorelum\versions\` and creates `$env:LOCALAPPDATA\Lorelum\bin\lore.cmd`.
 
@@ -58,12 +58,14 @@ Follow [Quickstart](./quickstart) to install a Pack and run a query. [Configurat
 
 ## Update
 
-Read the target release's compatibility notes, then rerun the installer with its version. Stop a running local Backend so subsequent requests use the new installation:
+Read the target release's compatibility notes, then rerun the installer with its version. For an installation already managed by Lorelum, the installer safely stops the existing Backend before it activates a different CLI release. You do not need to stop it separately for the normal installer upgrade path.
+
+If the installer cannot confirm that the Backend stopped, it leaves the previous command entry active and reports that the new release was not activated. This avoids installing a CLI that would immediately talk to an incompatible Backend. Run `backend stop` with the previous release, resolve the reported local condition, then rerun the installer:
 
 ```sh
 lore backend stop
 ```
 
-The next semantic command starts it again. Restart your agent application if it still uses the old CLI environment.
+Manual archive replacement does not have this handoff. Stop the Backend before replacing a manually managed executable. The next semantic command starts it again. Restart your agent application if it still uses the old CLI environment.
 
 CLI, Pack, and Plugin versions are managed separately. Use [Pack commands](./reference/packs) for Pack updates and [Codex integration](./codex) for Plugin updates. See [Alpha compatibility](./alpha) before moving an existing Store between versions.

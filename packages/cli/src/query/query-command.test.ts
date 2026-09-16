@@ -10,6 +10,7 @@ import {
   type QueryResult,
 } from "@lorelum/engine";
 import type { BackendClient } from "@lorelum/backend/client";
+import { BackendError } from "@lorelum/backend/protocol";
 
 import { run } from "../main.js";
 import {
@@ -181,7 +182,17 @@ test("uses semantic Backend query by default and preserves semantic metadata", a
   expect(calls).toBe(1);
   expect(received).toEqual({
     root: "unused-default",
-    request: { text: "How do I verify a release?", limit: 7, mode: "semantic" },
+    request: {
+      text: "How do I verify a release?",
+      limit: 7,
+      mode: "semantic",
+      maxWaitMs: 3_000,
+      minCoveragePercent: 0,
+      projectContext: {
+        cacheRoot: expect.any(String),
+        startDirectory: process.cwd(),
+      },
+    },
   });
   expect(result.response.data).toEqual(semantic);
   expect(validateJsonSchema(result.response.data, result.definition.resultSchema)).toEqual([]);
@@ -205,6 +216,40 @@ test("returns preparing as a successful exit-1 result", async () => {
   expect(result.exitCode).toBe(1);
   expect(result.response).toMatchObject({ ok: true, data: preparation });
   expect(validateJsonSchema(result.response.data, result.definition.resultSchema)).toEqual([]);
+});
+
+test("requires complete coverage without cancelling the accepted semantic operation", async () => {
+  let received: unknown;
+  const result = await invoke(
+    ["query", "How do I verify a release?", "--require-complete"],
+    {
+      async query() {
+        throw new Error("keyword path should not run");
+      },
+    },
+    async () =>
+      ({
+        async query(_root, request) {
+          received = request;
+          return {
+            state: "indexing" as const,
+            operationId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+            indexedPracticeCount: 50,
+            totalPracticeCount: 100,
+          };
+        },
+      }) as Pick<BackendClient, "query">,
+  );
+  expect(received).toMatchObject({
+    minCoveragePercent: 100,
+    projectContext: { cacheRoot: expect.any(String), startDirectory: process.cwd() },
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.response.data).toMatchObject({
+    state: "indexing",
+    indexedPracticeCount: 50,
+    totalPracticeCount: 100,
+  });
 });
 
 test("rejects an invalid mode before creating the Backend client", async () => {
@@ -314,6 +359,37 @@ test("maps undeclared query failures without exposing details", async () => {
   expect(result.exitCode).toBe(2);
   expect(result.response.error.code).toBe("runtime.unexpected");
   expect(JSON.stringify(result.response)).not.toContain("internal-path");
+});
+
+test("publishes compatibility recovery as an optional query failure field", async () => {
+  const result = await invoke(
+    ["query", "recover this task"],
+    {
+      async query() {
+        return queryResult;
+      },
+    },
+    async () => ({
+      async query() {
+        throw new BackendError("backend.protocol-mismatch", undefined, {
+          action: "backend.stop-if-idle",
+          automation: "defer",
+          reason: "active-long-task",
+          retry: "original-command",
+        });
+      },
+    }),
+  );
+  expect(result.exitCode).toBe(2);
+  expect(result.response.error).toMatchObject({
+    code: "backend.protocol-mismatch",
+    recovery: {
+      action: "backend.stop-if-idle",
+      automation: "defer",
+      reason: "active-long-task",
+      retry: "original-command",
+    },
+  });
 });
 
 test("renders explicit keyword and semantic query requests as text without changing ranking", async () => {

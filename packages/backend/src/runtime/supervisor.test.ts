@@ -1,12 +1,15 @@
 /* eslint-disable no-await-in-loop -- Wait for the exact test child to exit before testing recovery. */
 import { expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { mkdtemp, realpath, rm, stat, readFile, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createBackendSupervisor } from "./supervisor";
-import { readRecord } from "./runtime-state";
-import { isSameProcess } from "./process-identity";
+import { readRecord, writeRecord } from "./runtime-state";
+import { isSameProcess, processIdentity } from "./process-identity";
+import { PROTOCOL_VERSION } from "../protocol/constants";
+import { removeActivityRecord, setRuntimeActivity, withActivityLock } from "./activity-state";
 
 async function fixture(
   run: (directory: string, port: number, command: readonly string[]) => Promise<void>,
@@ -64,7 +67,7 @@ test("status and stop of absent backend do not create runtime files", async () =
   }));
 
 test(
-  "concurrent starters share one daemon; mismatched builds cannot control it",
+  "concurrent starters share one daemon; a different build can stop it",
   async () =>
     fixture(async (directory, port, command) => {
       const options = {
@@ -85,14 +88,169 @@ test(
         expect((await stat(join(directory, "instance.json"))).mode & 0o777).toBe(0o600);
       }
       const mismatched = createBackendSupervisor({ ...options, buildIdentity: "different-build" });
-      await expect(mismatched.status()).rejects.toMatchObject({ code: "backend.incompatible" });
-      await expect(mismatched.start()).rejects.toMatchObject({ code: "backend.incompatible" });
-      await expect(mismatched.stop()).rejects.toMatchObject({ code: "backend.incompatible" });
-      expect(await controllers[0]!.stop()).toEqual({ state: "stopped", model: "unloaded" });
+      await expect(mismatched.status()).rejects.toMatchObject({ code: "backend.build-mismatch" });
+      await expect(mismatched.start()).rejects.toMatchObject({ code: "backend.build-mismatch" });
+      expect(await mismatched.stop()).toEqual({ state: "stopped", model: "unloaded" });
       expect(await isSameProcess(record)).toBe(false);
       expect(await readRecord(directory)).toBeUndefined();
       const log = await readFile(join(directory, "backend.log"), "utf8");
       expect(log).not.toContain(record.secret);
+    }),
+  20_000,
+);
+
+test(
+  "current CLI explicitly stops a verified protocol-mismatched daemon without its old CLI",
+  async () =>
+    fixture(async (directory, port, command) => {
+      const old = createBackendSupervisor({
+        buildIdentity: "integration-build",
+        protocolVersion: PROTOCOL_VERSION - 1,
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+      });
+      await old.start();
+      const record = (await readRecord(directory))!;
+      const current = createBackendSupervisor({
+        buildIdentity: "current-build",
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+      });
+      await expect(current.status()).rejects.toMatchObject({ code: "backend.protocol-mismatch" });
+      const recovery = createBackendSupervisor({
+        buildIdentity: "current-build",
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+        createClient: () => {
+          throw new Error("Protocol-mismatch recovery must not call the old data plane.");
+        },
+      });
+      expect(await recovery.stop()).toEqual({ state: "stopped", model: "unloaded" });
+      expect(await isSameProcess(record)).toBe(false);
+      expect(await readRecord(directory)).toBeUndefined();
+    }),
+  20_000,
+);
+
+test(
+  "protocol-mismatch recovery refuses a tampered native-child record without stopping either process",
+  async () =>
+    fixture(async (directory, port, command) => {
+      const old = createBackendSupervisor({
+        buildIdentity: "integration-build",
+        protocolVersion: PROTOCOL_VERSION - 1,
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+      });
+      await old.start();
+      const daemon = (await readRecord(directory))!;
+      const foreign = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          foreign.once("spawn", resolve);
+          foreign.once("error", reject);
+        });
+        if (foreign.pid === undefined) throw new Error("Test child did not receive a PID.");
+        const foreignIdentity = await processIdentity(foreign.pid);
+        if (foreignIdentity === undefined)
+          throw new Error("Test child exited before verification.");
+        await writeRecord(directory, {
+          ...daemon,
+          modelProcess: { ...foreignIdentity, nativeBuild: "0".repeat(64) },
+        });
+        const current = createBackendSupervisor({
+          buildIdentity: "current-build",
+          command,
+          runtimeDirectory: directory,
+          baseUrl: `http://127.0.0.1:${port}`,
+        });
+        await expect(current.stop()).rejects.toMatchObject({ code: "backend.state-invalid" });
+        expect(await isSameProcess(daemon)).toBe(true);
+        expect(await isSameProcess(foreignIdentity)).toBe(true);
+        await writeRecord(directory, daemon);
+      } finally {
+        if (foreign.pid !== undefined && foreign.exitCode === null && foreign.signalCode === null) {
+          foreign.kill("SIGKILL");
+          await new Promise<void>((resolve) => foreign.once("close", () => resolve()));
+        }
+      }
+    }),
+  20_000,
+);
+
+test(
+  "automatic handoff stops only an idle Backend and defers active or unknown activity",
+  async () =>
+    fixture(async (directory, port, command) => {
+      const options = {
+        buildIdentity: "integration-build",
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+      };
+      const owner = createBackendSupervisor(options);
+      const otherBuild = createBackendSupervisor({ ...options, buildIdentity: "different-build" });
+      await owner.start();
+      const record = (await readRecord(directory))!;
+      expect(await otherBuild.inspectCompatibilityRecovery()).toMatchObject({
+        automation: "auto",
+        reason: "idle",
+      });
+
+      const lease = await owner.acquireTaskLease(60_000);
+      expect(await otherBuild.stopIfIdle()).toEqual({
+        state: "deferred",
+        reason: "active-long-task",
+      });
+      expect(await isSameProcess(record)).toBe(true);
+      await owner.releaseTaskLease(lease.leaseId);
+
+      await withActivityLock(directory, 1_000, () =>
+        setRuntimeActivity(directory, record.instanceId, "index-operation", true),
+      );
+      expect(await otherBuild.stopIfIdle()).toEqual({
+        state: "deferred",
+        reason: "active-long-task",
+      });
+      await withActivityLock(directory, 1_000, () =>
+        setRuntimeActivity(directory, record.instanceId, "index-operation", false),
+      );
+
+      await withActivityLock(directory, 1_000, () =>
+        removeActivityRecord(directory, record.instanceId),
+      );
+      expect(await otherBuild.stopIfIdle()).toEqual({
+        state: "deferred",
+        reason: "unknown-activity",
+      });
+      expect(await isSameProcess(record)).toBe(true);
+      await withActivityLock(directory, 1_000, () =>
+        setRuntimeActivity(directory, record.instanceId, "daemon-startup", false),
+      ).catch(() => undefined);
+    }),
+  20_000,
+);
+
+test(
+  "automatic handoff stops a verified idle Backend and cleans its activity record",
+  async () =>
+    fixture(async (directory, port, command) => {
+      const options = {
+        buildIdentity: "integration-build",
+        command,
+        runtimeDirectory: directory,
+        baseUrl: `http://127.0.0.1:${port}`,
+      };
+      await createBackendSupervisor(options).start();
+      const otherBuild = createBackendSupervisor({ ...options, buildIdentity: "different-build" });
+      expect(await otherBuild.stopIfIdle()).toEqual({ state: "stopped" });
+      expect(await readRecord(directory)).toBeUndefined();
     }),
   20_000,
 );

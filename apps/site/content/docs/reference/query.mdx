@@ -1,15 +1,15 @@
 ---
 title: query
-description: Find the right installed Practices for an AI coding task and moment.
+description: Find the right current Practices for an AI coding task and moment.
 ---
 
-`query` searches the selected local Store and returns ranked Practice summaries. Semantic relevance is the default; keyword mode is an explicit offline path.
+`query` searches the current query context and returns ranked Practice summaries. Semantic relevance is the default; keyword mode is an explicit offline path. When the current directory or an ancestor has `.lorelum/`, its layers are inherited and merged from parent to child. Use `--no-project` to use only the selected Store.
 
 ```sh
-lore query <text> [--mode semantic|keyword] [--top-k <n>] [--store-root <path>]
+lore query <text> [--mode semantic|keyword] [--top-k <n>] [--store-root <path>] [--project-root <path>] [--no-project] [--cache-root <path>]
 ```
 
-`text` is required, must be non-empty after trimming, and is limited to 4,096 Unicode code points. `--top-k` accepts an integer from 1 to 50 and defaults to 5. `--mode` is `semantic` (default) or `keyword`. The global `--store-root` selects the LocalStore; `--log-level` controls stderr logging.
+`text` is required, must be non-empty after trimming, and is limited to 4,096 Unicode code points. `--top-k` accepts an integer from 1 to 50 and defaults to 5. `--mode` is `semantic` (default) or `keyword`. `--store-root` selects Store base data; `--project-root` selects a directory directly containing `.lorelum/`; `--cache-root` selects user-level derived cache and never writes into the project. `--max-wait-ms` and `--min-coverage-percent` override the user-level wait and partial-result policy; `--require-complete` accepts only complete semantic results.
 
 ```sh
 lore query "I am about to define scope and validation for a small UI change"
@@ -17,17 +17,18 @@ lore query "authorization boundary" --top-k 10
 lore query "token session cookie" --mode keyword
 ```
 
-Successful data has `mode` and `results`. Each result includes `practiceId`, `title`, `stage`, `techStack`, `appliesWhen`, `severity`, and `contentDigest`; pass that `practiceId` to [`get`](./get). Semantic results also include `profileId` and `coverage`: `complete` means every current Practice is indexed; `partial` means changed Practices are temporarily excluded, so results remain usable but may omit the newest content. Run `lore index build` to refresh coverage.
+The first semantic query submits or joins the background index operation for the current corpus; it does not require a preliminary `lore index build`. Successful data has `mode` and `results`. Each result includes `practiceId`, `title`, `stage`, `techStack`, `appliesWhen`, `severity`, and `contentDigest`; pass that `practiceId` to [`get`](./get). Semantic results also include `profileId` and `coverage`: `complete` means a complete artifact matches every current Practice; `partial` searches only verified current progress rows and includes `indexedPracticeCount`, `totalPracticeCount`, and `operationId`. Changed, removed, shadowed, or ignored Practices never leak from an old artifact.
 
-If the semantic model is still preparing, data is `{ "state": "preparing", "preparationId": "...", "message": "..." }` and the process exits `1`; check `lore model status`, wait with `lore model load`, then retry. Query does not build a missing index.
+If the semantic model is still preparing, data is `{ "state": "preparing", "preparationId": "...", "message": "..." }` and the process exits `1`; check `lore model status`, wait with `lore model load`, then retry. If verified current progress has not reached the requested coverage, data is `{ "state": "indexing", "operationId": "...", "indexedPracticeCount": 50, "totalPracticeCount": 100 }` and also exits `1`. A wait timeout does not cancel the operation.
 
 | Error | Action |
 | --- | --- |
-| `semantic.index-not-ready` | Run `lore index build`. |
-| `semantic.index-incompatible` | Run `lore index rebuild`. |
+| `semantic.index-not-ready` | Normal CLI query does not return this; it automatically creates or joins the index operation. |
+| `semantic.index-incompatible` | Inspect `lore index status`; run `lore index rebuild` when needed. |
 | `semantic.embedding-failed` or `embedding.*` | Check `lore model status`, then retry `lore model load`. |
+| `backend.build-mismatch` / `backend.protocol-mismatch` | A verified Backend belongs to another Lorelum build or protocol. A supported Agent reads `error.recovery`: it automatically runs `lore backend stop --if-idle` and retries only when the Backend is proven idle; active or unknown work is left running and retried in the background. |
 | `query.unavailable` / `query.failed` | Inspect the keyword index and Store state. |
 | `store.busy` / `store.recovery-required` | Wait for the active Store operation or perform the documented recovery. |
 | `usage.invalid` | Correct the query text or option values. |
 
-Successful results exit `0`; preparation exits `1`; failures exit `2`. For the installed schema and complete error allowlist, run `lore describe query`.
+Successful results exit `0`; preparation exits `1`; failures exit `2`. Build/protocol mismatch failures additionally expose `error.recovery` with `action`, `automation`, `reason`, and `retry`; callers use it instead of parsing an error message or asking a user to stop another Backend. For the installed schema and complete error allowlist, run `lore describe query`.

@@ -1,21 +1,20 @@
 import { embeddingController } from "./modules/embedding/controller";
 import type { EmbeddingService } from "./modules/embedding/service";
-import type { QueryService, SemanticQueryService } from "@lorelum/engine";
+import type { QueryService } from "@lorelum/engine";
 import { Elysia } from "elysia";
 import { backendController } from "./modules/backend/controller";
 import type { BackendService } from "./modules/backend/service";
 import { queryController } from "./modules/query/controller";
 import { indexController } from "./modules/index/controller";
-import type { IndexOperationService } from "./modules/index/operation-service";
+import type { ContentAddressedSemanticRuntimePort } from "./modules/query/content-addressed-semantic-runtime";
 import { localBoundary, reject } from "./plugins/local-auth";
 import { BACKEND_HOST, BACKEND_PORT } from "./protocol/constants";
 
 export interface CreateBackendAppOptions {
   readonly backend: BackendService;
   readonly embedding?: EmbeddingService;
-  readonly indexOperations?: IndexOperationService;
   readonly keywordQueryService: QueryService;
-  readonly semanticQueryService: SemanticQueryService;
+  readonly semanticRuntime: ContentAddressedSemanticRuntimePort;
   /** Internal test injection; production always uses the fixed IPv4 endpoint. */
   readonly host?: string;
   readonly port?: number;
@@ -45,16 +44,12 @@ export function createBackendApp(options: CreateBackendAppOptions) {
     .use(
       options.embedding ? embeddingController(options.embedding, backend.available) : new Elysia(),
     )
-    .use(
-      options.indexOperations
-        ? indexController(options.indexOperations, backend.available)
-        : new Elysia(),
-    )
+    .use(indexController(options.semanticRuntime, backend.available))
     .use(
       queryController(
         {
           keywordQueryService: options.keywordQueryService,
-          semanticQueryService: options.semanticQueryService,
+          semanticRuntime: options.semanticRuntime,
         },
         backend.available,
       ),

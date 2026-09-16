@@ -1,11 +1,11 @@
 ---
 title: Index commands
-description: Inspect, build, or rebuild a Store's semantic index.
+description: Inspect, build, or rebuild the current query context's semantic artifact.
 ---
 
-Pack installation normally starts the required index work. Use these commands to inspect progress or recover an existing Store.
+Query starts needed index work automatically. Use these commands to inspect, explicitly build, force a rebuild, or recover the current context.
 
-All commands accept the global `--store-root <path>` and `--log-level <level>` options. The selected Store owns the derived index; Backend and model settings remain user-level.
+All commands accept `--store-root <path>`, `--cache-root <path>`, and `--log-level <level>`. The Store supplies base data and user-level cache holds derived artifacts; Backend and model settings also remain user-level. A directory with `.lorelum/` uses ProjectContext by default; `--no-project` uses only the Store.
 
 ```sh
 lore index status
@@ -16,7 +16,7 @@ lore index operation <operation-id>
 
 ## Build and rebuild
 
-`build` reuses compatible index data and updates changed Practices. It starts the Backend and prepares the model when needed. If the index already covers the Store, it can return without rebuilding.
+`build` reuses compatible artifacts and `(profileId, projectionDigest)` vectors. It starts the Backend and prepares the model when needed. If a complete artifact already covers the current context, it can return without rebuilding. Identical final corpora join one operation; different targets queue instead of returning `backend.busy`.
 
 `rebuild` discards reuse and builds a complete replacement. Use it when Lorelum reports an incompatible index.
 
@@ -24,14 +24,14 @@ Both commands can return while work continues. Follow the returned operation ID 
 
 ## Status
 
-`status` inspects the Store's index without starting the Backend. It returns `state` (`missing`, `ready`, `stale`, or `incompatible`), `profileId`, and, when ready, `vectorCount`. A missing index needs `build`; an incompatible index needs `rebuild`. Keep the same `--store-root` across these commands and your query.
+`status` inspects the current context's artifact and progress without starting the Backend. It returns `state` (`missing`, `indexing`, `ready`, `stale`, or `incompatible`) and `profileId`; `indexing` also includes the operation ID and completed/total Practice counts, while `ready` includes `vectorCount`. Keep the same `--store-root` and `--cache-root` across these commands and your query.
 
 `status` and `operation` require a running Backend and do not start it themselves. If the service is stopped, run `lore backend start` before inspecting them.
 
 ## Operations and errors
 
-Only one Store build runs at a time. If the Backend reports `backend.busy`, wait for the active work.
+Repeated edits to one directory pursue only its newest target. Identical artifacts join one operation; different artifacts become `queued`. Disconnecting the CLI does not cancel accepted work.
 
-Operation IDs belong to a running daemon. After a restart, `backend.operation-expired` means you should inspect `index status` and start another build if needed.
+After a daemon restart, an unfinished operation keeps verified progress and becomes `waiting-for-source`. The next query, build, or rebuild in the same Store or project directory reattaches safely; the journal stores neither project absolute paths nor Practice bodies.
 
 Status and accepted builds exit `0`; confirmed failures exit `2`. An accepted operation is not necessarily finished. Run `lore describe index.build` for the current schema.

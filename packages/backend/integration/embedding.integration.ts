@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createBackendApp } from "../src/app";
 import { createBackendClient } from "../src/client/client";
 import { createBackendService } from "../src/modules/backend/service";
+import { createContentAddressedSemanticRuntimeStub } from "../src/modules/query/content-addressed-semantic-runtime.test-helper";
 import { PROTOCOL_VERSION } from "../src/protocol/constants";
 import {
   assertUnitVector,
@@ -36,11 +37,7 @@ const app = createBackendApp({
       return { mode: "keyword", results: [] };
     },
   },
-  semanticQueryService: {
-    async query() {
-      return { mode: "semantic", profileId: "a".repeat(64), coverage: "complete", results: [] };
-    },
-  },
+  semanticRuntime: createContentAddressedSemanticRuntimeStub(),
 });
 
 // Declared before the scenario runs; a top-level const below the try block is in the

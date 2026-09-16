@@ -113,6 +113,7 @@ const registryMutationResultSchema: JsonSchema = {
     ...mutationResultRequired,
     "idempotent",
     "artifactDigest",
+    "packRoot",
   ],
   properties: {
     pack: {
@@ -136,6 +137,7 @@ const registryMutationResultSchema: JsonSchema = {
     ...mutationResultProperties,
     idempotent: { type: "boolean" },
     artifactDigest: stringSchema,
+    packRoot: stringSchema,
   },
 };
 
@@ -149,6 +151,7 @@ const installResultSchema: JsonSchema = {
     ...mutationResultRequired,
     "idempotent",
     "artifactDigest",
+    "packRoot",
     "indexSync",
   ],
   properties: {
@@ -173,6 +176,7 @@ const installResultSchema: JsonSchema = {
     ...mutationResultProperties,
     idempotent: { type: "boolean" },
     artifactDigest: stringSchema,
+    packRoot: stringSchema,
     indexSync: indexSyncSchema,
   },
 };
@@ -289,6 +293,7 @@ async function mutateRegistryPack(
       idempotent: result.idempotent,
       cleanupPending: result.cleanupPending,
       artifactDigest: result.artifactDigest,
+      packRoot: result.packRoot,
     };
     if (operation !== "install") return data;
     const indexSync = await synchronizeIndex(services, storageRoot);

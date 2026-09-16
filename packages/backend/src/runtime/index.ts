@@ -1,5 +1,6 @@
 export {
   createBackendSupervisor,
+  type BackendHandoffResult,
   type BackendSupervisor,
   type BackendSupervisorOptions,
 } from "./supervisor";

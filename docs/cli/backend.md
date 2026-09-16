@@ -43,20 +43,28 @@ lore backend status
 
 ```sh
 lore backend stop
+# Agent-only safe handoff; it never stops active or unknown work.
+lore backend stop --if-idle
 ```
 
-请求经过身份验证的实例停止，取消下载或卸载模型并等待 daemon 退出。只有确认停止后才退出 `0`，data 为 stopped/unloaded。没有服务时可重复调用；不会按端口或名称终止陌生进程。下载片段保留，下次 model load 可恢复。
+不带参数的 `backend stop` 是明确运维动作：它请求经过身份验证的实例停止，取消下载或卸载模型并等待 daemon 退出。对于 protocol-compatible 的旧 build，它继续使用 authenticated stop；对于 protocol 不兼容但 ownership 仍可由私有 runtime record、PID 和启动时间精确验证的旧 daemon，当前 CLI 会先发本地 graceful termination，超时后只终止同一已验证 lifecycle。它不依赖已经被升级删除的旧 CLI，也绝不按端口或名称终止陌生进程。
+
+`backend stop --if-idle` 是给 Agent recovery runner 的受限动作，不是普通用户排障命令。它在 lifecycle lock 内二次检查 Backend 的私有 activity record 和 task lease：只有明确 idle 时才停止，成功 data 为 `{ "state": "stopped" }`；模型准备、index operation、有效 Agent lease 或 activity 无法验证时返回 `{ "state": "deferred", "reason": "active-long-task" | "unknown-activity" }`，不会发 signal、删除 record 或中断工作。Agent 只可自动调用这一种 stop；普通 `backend stop` 只由用户或显式运维调用。
+
+支持的 host Agent 通过 `backend lease acquire`、`renew`、`release` 管理不含任务内容的短期 opaque lease。它们是机器集成控制面，不要求普通用户手动维护。
 
 ## 配置与错误
 
-配置读取、默认值、环境变量和生效时机见 [配置入口](../configuration/README.md)、[Backend 配置](../configuration/backend.md)。backend 三个命令会读取并验证配置；修改配置不会热更新运行实例，重复 start 也不会刷新快照。
+用户可编辑的配置、默认值、环境变量和生效时机见[配置指南](https://lorelum.com/zh/docs/configuration)。backend lifecycle 命令会读取并验证配置；修改配置不会热更新运行实例，重复 start 也不会刷新快照。
 
 失败退出 `2`，输出 `ok:false` 的 [CLI envelope](README.md)。常见错误：
 
 | code | 处理 |
 | --- | --- |
 | `backend.port-conflict` | 固定端口属于未验证的服务，检查占用 |
-| `backend.incompatible` | 客户端与后台 build 或协议不匹配，检查是否混用了不同工作目录的程序 |
+| `backend.build-mismatch` | 已验证 Backend 的 protocol 可用但属于另一 build；semantic query 会给 host Agent `auto` 或 `defer` recovery，不要求用户处理 worktree/build 细节 |
+| `backend.protocol-mismatch` | 已验证 Backend 的内部 protocol 不同；semantic query 仍给出安全 recovery，显式 `backend stop` 可用当前 CLI 收敛精确验证的旧 lifecycle |
+| `backend.incompatible` | 非 lifecycle 的兼容性问题，例如 encoding/profile 不匹配；它不是自动 handoff 信号 |
 | `backend.config-invalid` | 修正 YAML、未知字段或越界值 |
 | `backend.state-invalid` | 私有运行记录或权限无法安全使用 |
 | `backend.deadline-exceeded` | 操作未在配置预算内达到目标状态 |

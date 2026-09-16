@@ -15,7 +15,19 @@ lore --store-root /path/to/store pack install agentic-coding
 lore --store-root /path/to/store query "how should I verify an authentication change?"
 ```
 
-This option selects Pack data and derived indexes only. It does not select the model, model cache, Backend address, or runtime directory.
+This option selects Pack data in the Store. It does not select the query cache, model, model cache, Backend address, or runtime directory.
+
+## Query cache and wait policy
+
+Derived query data is user-level and rebuildable. Its default root is `~/.lorelum/cache`; it never writes project `.lorelum/`, Git metadata, or LocalStore. Use `--cache-root <path>` to isolate one query, index, or cache command. Equivalent final Practice corpora reuse artifacts and embedding vectors regardless of directory, Git/worktree, branch, commit, or mtime.
+
+```yaml
+query:
+  maxWaitMs: 3000
+  minCoveragePercent: 0
+```
+
+These are integer milliseconds from 0 through 120000 and an integer percentage from 0 through 100. A query timeout leaves its accepted operation running; verified current progress that meets the percentage may return a partial result. Use `lore cache status` to inspect cache state and `lore cache prune` to remove unused derived state explicitly.
 
 ## Model and Backend
 
@@ -68,3 +80,5 @@ backend:
 ```
 
 Each value is an integer from 1 to 120000 milliseconds. `LORELUM_BACKEND_STARTUP_TIMEOUT_MS`, `LORELUM_BACKEND_REQUEST_TIMEOUT_MS`, and `LORELUM_BACKEND_SHUTDOWN_TIMEOUT_MS` override YAML. Startup covers service and native runtime; request covers one request; shutdown covers unload and stop.
+
+Model-file download time is controlled by the embedding download settings above, not the native-runtime startup budget. Backend reads these settings once when it starts, so changing YAML or environment variables does not change an already-running instance; restart Backend to apply them. `backend status`, `backend stop`, and model commands never write your configuration file.

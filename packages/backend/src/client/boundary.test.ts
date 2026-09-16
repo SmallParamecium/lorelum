@@ -6,11 +6,13 @@ async function bundledInputs(entrypoints: string[]): Promise<string[]> {
   const script = `const result = await Bun.build({ entrypoints: ${JSON.stringify(entrypoints)}, target: "bun", metafile: true });
     if (!result.success) throw new Error("Boundary build failed");
     console.log(JSON.stringify(Object.keys(result.metafile.inputs)));`;
-  const process = Bun.spawn([Bun.which("bun")!, "-e", script], { stdout: "pipe", stderr: "pipe" });
+  // process.execPath is the real bun binary; Bun.which may resolve to an
+  // npm-generated .cmd shim that cannot carry cmd metacharacters in arguments.
+  const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
   const [output, errors, exit] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
   ]);
   expect(exit).toBe(0);
   expect(errors).toBe("");
@@ -20,7 +22,8 @@ async function bundledInputs(entrypoints: string[]): Promise<string[]> {
     !inputs.every((value): value is string => typeof value === "string")
   )
     throw new Error("Invalid build metadata");
-  return inputs;
+  // Bun's build metafile reports native separators; matchers below assume "/".
+  return inputs.map((path) => path.replace(/\\/g, "/"));
 }
 const engine = (path: string) => path.includes("packages/engine/src/");
 const elysia = (path: string) => path.includes("node_modules/elysia/");

@@ -1,0 +1,63 @@
+import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+/**
+ * This catalog is advisory, not a source of Practice content. It permits safe
+ * inspection and cleanup of content-addressed files without retaining where a
+ * user happened to keep a project or what its Practices said.
+ */
+export const contentArtifacts = sqliteTable(
+  "project_context_artifacts",
+  {
+    artifactId: text("artifact_id").primaryKey(),
+    kind: text("kind").notNull(),
+    profileId: text("profile_id"),
+    corpusDigest: text("corpus_digest").notNull(),
+    documentCount: integer("document_count").notNull(),
+    createdAt: text("created_at").notNull(),
+    lastAccessedAt: text("last_accessed_at").notNull(),
+  },
+  (table) => [
+    index("project_context_artifacts_by_access").on(table.lastAccessedAt),
+    index("project_context_artifacts_by_kind").on(table.kind, table.profileId),
+  ],
+);
+
+/** A catalog entry may describe the complete file and its in-progress sibling. */
+export const contentArtifactIndexes = sqliteTable(
+  "project_context_artifact_indexes",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => contentArtifacts.artifactId, { onDelete: "cascade" }),
+    state: text("state").notNull(),
+    relativePath: text("relative_path").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    publishedAt: text("published_at").notNull(),
+    verifiedAt: text("verified_at"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.artifactId, table.state] }),
+    index("project_context_artifact_indexes_by_path").on(table.relativePath),
+  ],
+);
+
+/**
+ * One immutable artifact can be a predecessor for several source slots. Keep
+ * these opaque checkpoints separate from the content-addressed artifact row so
+ * a query in one directory never overwrites another source's delta history.
+ */
+export const contentArtifactSources = sqliteTable(
+  "content_artifact_sources",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => contentArtifacts.artifactId, { onDelete: "cascade" }),
+    sourceSlotId: text("source_slot_id").notNull(),
+    sourceRevision: integer("source_revision"),
+    lastAccessedAt: text("last_accessed_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.artifactId, table.sourceSlotId] }),
+    index("content_artifact_sources_by_slot").on(table.sourceSlotId, table.lastAccessedAt),
+  ],
+);

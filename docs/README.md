@@ -12,7 +12,7 @@ Lorelum 的文档按“当前合同、接口参考、决策原因、开发证据
 
 ## 参考与证据
 
-- [CLI](cli/README.md)、[Backend API](api/README.md)、[配置](configuration/README.md)：命令、HTTP 与配置细节；它们解释如何使用当前合同，而不创建另一套行为规范。
+- [Backend API](api/README.md)、[配置实现说明](configuration/README.md)：内部 HTTP、配置包与运行时细节；公开命令、安装和配置说明只在[文档站](https://lorelum.com/zh/docs)维护，不创建另一套行为规范。
 - [ADRs](adr/README.md)：已接受架构决定的原因和 supersession 状态。Proposed ADR 不是当前合同。
 - [开发指南](development/README.md)：worktree、构建、验证与 benchmark 证据。
 - [研究资料](research/)：技术选择与实验记录，不直接构成产品要求。

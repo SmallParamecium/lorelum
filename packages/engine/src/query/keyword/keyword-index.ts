@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 
 import { KeywordIndexError, KeywordIndexUnavailableError } from "../errors";
+import { closeSqliteClient } from "../../persistence/database/connection";
 import { encodeKeywordMatch, tokenizeKeywordText } from "./tokenizer";
 import type { KeywordDocument } from "./projection";
 
@@ -131,7 +132,7 @@ export function buildKeywordIndex(documents: readonly KeywordDocument[]): Keywor
     return openKeywordIndex(database);
   } catch (error) {
     try {
-      database?.close();
+      if (database !== undefined) closeSqliteClient(database);
     } catch {
       // The original build failure is the useful error for callers.
     }
@@ -198,7 +199,7 @@ export function openKeywordIndex(database: Database): KeywordIndex {
       if (closed) return;
       closed = true;
       try {
-        database.close();
+        closeSqliteClient(database);
       } catch (error) {
         throw toKeywordIndexError("Cannot close SQLite keyword index", error);
       }

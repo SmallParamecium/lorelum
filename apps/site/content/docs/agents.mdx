@@ -13,13 +13,13 @@ Check `lore --version` in your command environment. If unavailable, follow [Inst
 Use the installer that matches the host where the agent runs commands. macOS on Apple Silicon and Linux x64 use the Unix installer:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/lorelum/lorelum/main/install.sh | sh -s -- --version 0.1.0-alpha.2
 ```
 
 Windows x64 uses PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.1
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/lorelum/lorelum/main/install.ps1))) -Version 0.1.0-alpha.2
 ```
 
 Do not run `install.sh` or double-click the installer on Windows. Run the PowerShell command from an already-open session so errors remain visible. macOS is the priority and most thoroughly validated release target; Linux and Windows are best-effort targets. Read [Installation](./installation) before treating another environment as compatible.
@@ -69,7 +69,7 @@ Retrieve again if new facts change the decision. Describe how the relevant guida
 
 A Practice can link Pack-native material with a `resource:` target, such as `resource:references/api-compatibility.md`. Resolve it from the matching source's `packRoot` in the `get` result. Read a reference when it provides the extra detail needed for the decision; copy an asset into the task workspace before editing it; and run a script only when the current task authorizes it and the Practice explains its inputs and purpose.
 
-The link is the default task route, not a file-access allowlist. The Codex SessionStart Catalog gives every installed Pack its current `packRoot`, so you may use that root when the Pack context is already clear. For a retrieved Practice, keep multiple sources separate and use the matching `get` source root rather than silently choosing a Catalog entry. Refresh `get` or `pack list` if any earlier locator is stale after an update; never derive roots from Store internals. Never assume a Pack script runs during install, validation, query, listing, get, indexing, or recovery.
+The link is the default task route, not a file-access allowlist. The Codex SessionStart Catalog gives every installed Pack its readable current `packRoot`, so you may use that root when the Pack context is already clear. For a retrieved Practice, keep multiple sources separate and use the matching `get` source root rather than silently choosing a Catalog entry. A root is a mutable current view: after a Pack mutation, retrieve `get` or `pack list` again before treating it as the current source; never derive roots from Store internals. Never assume a Pack script runs during install, validation, query, listing, get, indexing, or recovery.
 
 ## Handle JSON and process status
 

@@ -96,7 +96,10 @@ function runtime(
 
 async function invoke(
   arguments_: string[],
-  services: { readonly backend?: BackendClient; readonly runtime?: IndexRuntimeClient } = {},
+  services: {
+    readonly backend?: BackendClient;
+    readonly runtime?: IndexRuntimeClient;
+  } = {},
 ) {
   const stdout = new MemoryWriter();
   const definitions = snapshotCommandDefinitions(
@@ -132,6 +135,49 @@ test("index status forwards the selected Store root without creating a runtime c
     command: "index.status",
     data: { state: "stale", profileId, vectorCount: 4 },
   });
+});
+
+test("index commands defer automatic ProjectContext resolution to Backend and forward the selected cache", async () => {
+  const calls: unknown[] = [];
+  const operationId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+  const result = await invoke(
+    ["--store-root", "/isolated", "--cache-root", "/cache", "index", "build"],
+    {
+      runtime: {
+        async build(root, options) {
+          calls.push(["build", root, options]);
+          return {
+            operationId,
+            state: "queued",
+            indexedPracticeCount: 0,
+            totalPracticeCount: 2,
+          };
+        },
+        async rebuild() {
+          throw new Error("unexpected rebuild");
+        },
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.response.data).toEqual({
+    operationId,
+    state: "queued",
+    indexedPracticeCount: 0,
+    totalPracticeCount: 2,
+  });
+  expect(calls).toEqual([
+    [
+      "build",
+      { rootPath: resolve("/isolated") },
+      {
+        projectContext: {
+          cacheRoot: resolve("/cache"),
+          startDirectory: process.cwd(),
+        },
+      },
+    ],
+  ]);
 });
 
 test("index build forwards the selected Store root to the runtime client", async () => {

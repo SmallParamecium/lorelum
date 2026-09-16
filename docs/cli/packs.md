@@ -28,7 +28,7 @@ The adapted `lore pack install` command is text by default; pass `--json` for th
 
 `lore pack install` is idempotent only when the resolved artifact matches the active Pack exactly. If the same Pack name resolves to different content, it returns `pack.update-required` and leaves the Store unchanged. Use `lore pack update` to replace that Pack's sources with the selected release.
 
-`lore pack update` and `lore pack remove` return `pack.not-installed` when the named Pack is not active in the selected Store. All successful mutations return the committed `generation`, `effectiveRevision`, affected Practice `delta`, validation `diagnostics`, and `cleanupPending` state in the normal JSON envelope. Install and update additionally report the resolved Pack version, Registry, Git source, artifact digest, and whether the operation was idempotent.
+`lore pack update` and `lore pack remove` return `pack.not-installed` when the named Pack is not active in the selected Store. All successful mutations return the committed `generation`, `effectiveRevision`, affected Practice `delta`, validation `diagnostics`, and `cleanupPending` state in the normal JSON envelope. Install and update additionally report the resolved Pack version, Registry, Git source, artifact digest, whether the operation was idempotent, and the readable public `packRoot` at `packs/p-<pack-name>/current`. Remove deliberately returns no root because it has removed that current view.
 
 There is no bulk “update every Pack” operation. Each Pack update resolves one explicit Pack release, making Store changes and automation inputs deterministic. Root `lore update` is reserved for Lore's own version-management contract.
 

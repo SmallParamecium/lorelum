@@ -88,6 +88,19 @@ sha256() {
   fi
 }
 
+stop_diagnostic=''
+try_backend_stop() {
+  executable="$1"
+  label="$2"
+  diagnostic_path="$temporary/backend-stop-$label.log"
+  if "$executable" backend stop >"$diagnostic_path" 2>&1; then
+    return 0
+  fi
+  stop_diagnostic="$(tr '\n' ' ' < "$diagnostic_path" | cut -c 1-512)"
+  [ -n "$stop_diagnostic" ] || stop_diagnostic='the backend stop command returned no diagnostic output'
+  return 1
+}
+
 normalize_version() {
   value="${1#v}"
   printf '%s' "$value" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)*$' || return 1
@@ -151,6 +164,7 @@ package_directory="$temporary/extracted/$package_name"
 first_link="$(find "$package_directory" -type l -print -quit)"
 [ -z "$first_link" ] || fail 'archive must not contain symbolic links'
 
+current_target=''
 if [ -e "$command_path" ] || [ -L "$command_path" ]; then
   [ -L "$command_path" ] || fail "existing command is not managed by Lorelum: $command_path"
   current_target="$(readlink "$command_path" || true)"
@@ -158,13 +172,41 @@ if [ -e "$command_path" ] || [ -L "$command_path" ]; then
     "$install_root"/versions/*/lore) ;;
     *) fail "existing command is not managed by Lorelum: $command_path" ;;
   esac
+  current_relative="${current_target#"$install_root/versions/"}"
+  current_release="${current_relative%/lore}"
+  case "$current_release" in
+    ''|.|..|*/*) fail "existing command is not managed by Lorelum: $command_path" ;;
+  esac
+  current_directory="$install_root/versions/$current_release"
+  [ ! -L "$current_target" ] || fail "existing command is not managed by Lorelum: $command_path"
+  if [ -e "$current_target" ]; then
+    versions_directory="$(cd -P "$install_root/versions" 2>/dev/null && pwd -P)" ||
+      fail "existing command is not managed by Lorelum: $command_path"
+    resolved_current_directory="$(cd -P "$current_directory" 2>/dev/null && pwd -P)" ||
+      fail "existing command is not managed by Lorelum: $command_path"
+    [ "$resolved_current_directory" = "$versions_directory/$current_release" ] ||
+      fail "existing command is not managed by Lorelum: $command_path"
+  fi
 fi
 
 if [ -e "$destination" ] || [ -L "$destination" ]; then
   [ -d "$destination" ] || fail "existing version path is not a directory: $destination"
   cmp -s "$package_directory/lore" "$destination/lore" ||
     fail "existing version differs from the verified archive: $version"
-else
+fi
+
+if [ -n "$current_target" ] && [ "$current_target" != "$destination/lore" ]; then
+  printf '%s\n' 'Stopping the existing Lorelum Backend before upgrading.'
+  if [ -x "$current_target" ] && try_backend_stop "$current_target" old; then
+    :
+  elif try_backend_stop "$package_directory/lore" candidate; then
+    :
+  else
+    fail "cannot safely stop the existing Lorelum Backend; the previous release remains active and was not replaced. Run \"$command_path\" backend stop, resolve its reported error, then rerun the installer. Last stop result: $stop_diagnostic"
+  fi
+fi
+
+if [ ! -e "$destination" ] && [ ! -L "$destination" ]; then
   mkdir -p "$install_root/versions"
   mv "$package_directory" "$destination"
 fi

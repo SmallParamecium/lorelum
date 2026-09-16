@@ -23,7 +23,7 @@ This Plugin is deliberately CLI-first: it uses the compiled `lore` executable to
 
 ## Installation
 
-This Plugin is a Codex adapter. Ordinary users need Lorelum CLI v0.1.0-alpha.1 or later, available as `lore` on `PATH`; it does not embed, build, or update the CLI. Bun is only required for maintainers running the source and test workflows. See the [Codex installation guide](../../docs/plugins/codex.md) for the public marketplace commands and [the development guide](../../docs/development/plugins.md) for a checkout-backed development install.
+This Plugin is a Codex adapter. Ordinary users need Lorelum CLI v0.1.0-alpha.2 or later, available as `lore` on `PATH`; it does not embed, build, or update the CLI. Bun is only required for maintainers running the source and test workflows. See the [Codex installation guide](https://lorelum.com/en/docs/codex) for public marketplace commands and [the development guide](../../docs/development/plugins.md) for a checkout-backed development install.
 
 ### Windows notes
 

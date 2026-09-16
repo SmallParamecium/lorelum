@@ -76,6 +76,34 @@ test("renders structured protocol failures", () => {
   expect(validateProtocolSchema(JSON.parse(writer.value), protocolResponseSchema)).toEqual([]);
 });
 
+test("renders optional machine recovery without widening unrelated failures", () => {
+  const writer = new MemoryWriter();
+  renderFailure(
+    writer,
+    "query",
+    "backend.build-mismatch",
+    "A different Lorelum build owns the local backend.",
+    {
+      action: "backend.stop-if-idle",
+      automation: "auto",
+      reason: "idle",
+      retry: "original-command",
+    },
+  );
+  expect(JSON.parse(writer.value)).toMatchObject({
+    error: {
+      code: "backend.build-mismatch",
+      recovery: {
+        action: "backend.stop-if-idle",
+        automation: "auto",
+        reason: "idle",
+        retry: "original-command",
+      },
+    },
+  });
+  expect(validateProtocolSchema(JSON.parse(writer.value), protocolResponseSchema)).toEqual([]);
+});
+
 test("validates independent golden envelopes with the exported envelope schema", () => {
   for (const response of goldenEnvelopes) {
     expect(response.toolVersion).toBe(toolVersion);

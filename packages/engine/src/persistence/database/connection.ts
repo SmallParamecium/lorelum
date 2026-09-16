@@ -11,6 +11,15 @@ export interface OpenSqliteConnectionOptions {
   readonly readonly?: boolean;
 }
 
+/**
+ * Close every statement owned by this client before releasing its SQLite
+ * connection. Drizzle retains prepared statements, so the default close mode
+ * can leave a closed client holding a Windows file handle until GC runs.
+ */
+export function closeSqliteClient(client: Database): void {
+  client.close(true);
+}
+
 /** Wrap a caller-owned bun:sqlite client without changing its lifecycle. */
 export function createSqliteConnection<Schema extends Record<string, unknown>>(
   client: Database,
@@ -21,7 +30,7 @@ export function createSqliteConnection<Schema extends Record<string, unknown>>(
     client,
     orm,
     close() {
-      client.close();
+      closeSqliteClient(client);
     },
   });
 }
@@ -39,7 +48,7 @@ export function openSqliteConnection<Schema extends Record<string, unknown>>(
     client = opened;
     return createSqliteConnection(opened, schema);
   } catch (error) {
-    client?.close();
+    if (client !== undefined) closeSqliteClient(client);
     throw error;
   }
 }

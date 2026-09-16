@@ -4,7 +4,8 @@ import { InvalidQueryRequestError, SemanticIndexNotReadyError } from "@lorelum/e
 import { createBackendApp } from "../../app";
 import { createBackendService } from "../backend/service";
 import type { QueryService } from "@lorelum/engine";
-import type { SemanticQueryService } from "@lorelum/engine";
+import type { ContentAddressedSemanticRuntimePort } from "./content-addressed-semantic-runtime";
+import { createContentAddressedSemanticRuntimeStub } from "./content-addressed-semantic-runtime.test-helper";
 import { PROTOCOL_VERSION } from "../../protocol/constants";
 
 const secret = "query-controller-test-secret";
@@ -26,11 +27,14 @@ function request(body: unknown): Request {
   });
 }
 
-function app(keywordQueryService: QueryService, semanticQueryService: SemanticQueryService) {
+function app(
+  keywordQueryService: QueryService,
+  semanticRuntime: ContentAddressedSemanticRuntimePort,
+) {
   return createBackendApp({
     backend: createBackendService({ identity, secret, onStop: () => undefined }),
     keywordQueryService,
-    semanticQueryService,
+    semanticRuntime,
   });
 }
 
@@ -42,8 +46,8 @@ test("defaults query mode to semantic and preserves semantic result metadata", a
         throw new Error("keyword facade must not be selected");
       },
     },
-    {
-      async query(root, query) {
+    createContentAddressedSemanticRuntimeStub({
+      async query(root, _target, query) {
         calls.push(`${root.rootPath}:${query.text}`);
         return {
           mode: "semantic",
@@ -52,7 +56,7 @@ test("defaults query mode to semantic and preserves semantic result metadata", a
           results: [],
         };
       },
-    },
+    }),
   );
 
   const response = await instance.handle(
@@ -77,11 +81,11 @@ test("explicit keyword mode selects only the keyword facade", async () => {
         return { mode: "keyword", results: [] };
       },
     },
-    {
+    createContentAddressedSemanticRuntimeStub({
       async query() {
         throw new Error("semantic facade must not be selected");
       },
-    },
+    }),
   );
 
   const response = await instance.handle(
@@ -102,11 +106,11 @@ test("maps semantic index readiness failures to a typed remote error", async () 
         return { mode: "keyword", results: [] };
       },
     },
-    {
+    createContentAddressedSemanticRuntimeStub({
       async query() {
         throw new SemanticIndexNotReadyError();
       },
-    },
+    }),
   );
   const response = await instance.handle(
     request({ storageRoot: "/tmp/query-controller", query: { text: "deployment" } }),
@@ -122,11 +126,11 @@ test("maps invalid Engine input before exposing an implementation failure", asyn
         throw new InvalidQueryRequestError();
       },
     },
-    {
+    createContentAddressedSemanticRuntimeStub({
       async query() {
         return { mode: "semantic", profileId: "a".repeat(64), coverage: "complete", results: [] };
       },
-    },
+    }),
   );
   const response = await instance.handle(
     request({
@@ -136,4 +140,127 @@ test("maps invalid Engine input before exposing an implementation failure", asyn
   );
   expect(response.status).toBe(400);
   expect(await response.json()).toMatchObject({ error: { code: "usage.invalid" } });
+});
+
+test("uses the project runtime for partial and indexing query results", async () => {
+  const calls: unknown[] = [];
+  const runtime: ContentAddressedSemanticRuntimePort = {
+    async query(root, context, query) {
+      calls.push({ root, context, query });
+      return {
+        mode: "semantic",
+        profileId: "a".repeat(64),
+        coverage: "partial",
+        indexedPracticeCount: 1,
+        totalPracticeCount: 2,
+        operationId: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        results: [],
+      };
+    },
+    async indexStatus() {
+      return { state: "missing", profileId: "a".repeat(64) };
+    },
+    async build() {
+      return { operationId: crypto.randomUUID(), state: "building" };
+    },
+    async rebuild() {
+      return { operationId: crypto.randomUUID(), state: "building" };
+    },
+    async indexOperation() {
+      return undefined;
+    },
+    async waitForIdle() {},
+  };
+  const instance = app(
+    {
+      async query() {
+        return { mode: "keyword", results: [] };
+      },
+    },
+    runtime,
+  );
+  const response = await instance.handle(
+    request({
+      storageRoot: "/tmp/query-controller",
+      query: {
+        text: "deployment",
+        projectContext: { projectRoot: "/tmp/project", cacheRoot: "/tmp/cache" },
+      },
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    mode: "semantic",
+    coverage: "partial",
+    indexedPracticeCount: 1,
+    totalPracticeCount: 2,
+  });
+  expect(calls).toEqual([
+    {
+      root: { rootPath: "/tmp/query-controller" },
+      context: { kind: "project", projectRoot: "/tmp/project", cacheRoot: "/tmp/cache" },
+      query: { text: "deployment" },
+    },
+  ]);
+});
+
+test("uses the Store target runtime whenever semantic query supplies a cache root", async () => {
+  const calls: unknown[] = [];
+  const runtime: ContentAddressedSemanticRuntimePort = {
+    async query(root, target, query, policy) {
+      calls.push({ root, target, query, policy });
+      return {
+        state: "indexing",
+        operationId: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+        indexedPracticeCount: 50,
+        totalPracticeCount: 100,
+      };
+    },
+    async indexStatus() {
+      return { state: "missing", profileId: "a".repeat(64) };
+    },
+    async build() {
+      return { operationId: crypto.randomUUID(), state: "building" };
+    },
+    async rebuild() {
+      return { operationId: crypto.randomUUID(), state: "building" };
+    },
+    async indexOperation() {
+      return undefined;
+    },
+    async waitForIdle() {},
+  };
+  const instance = app(
+    {
+      async query() {
+        return { mode: "keyword", results: [] };
+      },
+    },
+    runtime,
+  );
+  const response = await instance.handle(
+    request({
+      storageRoot: "/tmp/query-controller",
+      query: {
+        text: "deployment",
+        cacheRoot: "/tmp/query-cache",
+        maxWaitMs: 5000,
+        minCoveragePercent: 80,
+      },
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    state: "indexing",
+    indexedPracticeCount: 50,
+    totalPracticeCount: 100,
+  });
+  expect(calls).toEqual([
+    {
+      root: { rootPath: "/tmp/query-controller" },
+      target: { kind: "store", cacheRoot: "/tmp/query-cache" },
+      query: { text: "deployment" },
+      policy: { maxWaitMs: 5000, minCoveragePercent: 80 },
+    },
+  ]);
 });
