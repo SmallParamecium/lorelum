@@ -8,6 +8,7 @@ import {
 import { PACK_NAME_REGEX } from "@lorelum/format";
 
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry.js";
 import {
   CliError,
@@ -73,6 +74,7 @@ export function createRemoveCommand(services: RemoveCommandServices): CommandDef
     summary: "Remove an installed Knowledge Pack from the selected local Store.",
     positionals: [{ name: "pack", required: true }],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema,
     errorCodes: uninstallErrorCodes,
     exitCodes: [0, 2],

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { formatPracticeMarkdown, serializeLocalizationManifest } from "@lorelum/format";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry.js";
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
 import { frameworkErrorCodes, cliErrorCodes } from "../runtime/errors.js";
@@ -70,6 +71,7 @@ export function createFormatCommand(): CommandDefinition {
     summary: "Format canonical and localized Pack source files.",
     positionals: [{ name: "pack-root", required: true }],
     options: [],
+    output: jsonOnlyOutput,
     resultSchema: formatResultSchema,
     errorCodes: formatErrors,
     exitCodes: [0, 2],

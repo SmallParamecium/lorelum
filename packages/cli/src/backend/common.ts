@@ -1,5 +1,6 @@
 import { BackendError, EmbeddingError } from "@lorelum/backend/protocol";
 import type { JsonValue } from "../output/protocol";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry";
 import { CliError, frameworkErrorCodes } from "../runtime/errors";
 
@@ -14,6 +15,7 @@ export function lifecycleCommand(
     ...metadata,
     positionals: [],
     options: [],
+    output: jsonOnlyOutput,
     exitCodes: [0, 2],
     errorCodes: [...frameworkErrorCodes, ...metadata.errorCodes],
     async handler() {

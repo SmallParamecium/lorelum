@@ -7,6 +7,7 @@ import {
   type LocalizationManifest,
   type LocalizationManifestEntry,
 } from "@lorelum/format";
+import { jsonOnlyOutput } from "../output/formats.js";
 import type { CommandDefinition } from "../registry.js";
 import type { JsonSchema, JsonValue } from "../output/protocol.js";
 import { frameworkErrorCodes, cliErrorCodes, CliError } from "../runtime/errors.js";
@@ -198,6 +199,7 @@ export function createSyncCommand(): CommandDefinition {
         optionRequired: false,
       },
     ],
+    output: jsonOnlyOutput,
     resultSchema: syncResultSchema,
     errorCodes: syncErrors,
     exitCodes: [0, 2],

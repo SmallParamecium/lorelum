@@ -10,6 +10,10 @@ lore query "database migration rollback" --top-k 10
 # Explicit zero-configuration, offline keyword retrieval.
 lore query "database migration rollback" --mode keyword
 
+# Human-readable Practice summaries; JSON remains the default.
+lore query "database migration rollback" --format=text
+lore query "request validation" --human
+
 lore --store-root /path/to/isolated-store query "request validation"
 lore describe query
 ```
@@ -48,9 +52,9 @@ The successful result includes the Profile identity and how completely the activ
 
 ## Shared result behavior
 
-Both modes return one JSON protocol envelope on stdout. `results` may be empty and contains at most `top-k` entries. Results are Practice summaries, not source files. They omit the full body and internal scores; use `lore get <practice-id>` to retrieve the complete canonical Practice. Results are deterministic for the same Store snapshot and query implementation. A query does not pin a revision for a later `get` invocation.
+JSON remains the default for both modes and returns the complete protocol envelope. With `--format=text` / `--human`, the CLI prints the mode (and semantic coverage), then ordered Practice summaries with stable IDs, titles, stage, severity, tech stack, and applicability. Empty results say `No matching Practices.` Text omits internal digests, semantic profile IDs, and preparation IDs; use `lore get <practice-id>` for the complete canonical Practice. Neither output format changes retrieval, ranking, or snapshot behavior.
 
-When automatic preparation has been accepted but is not ready within the observation interval, semantic query returns `ok: true`, exit code `1`, and no results:
+When automatic preparation has been accepted but is not ready within the observation interval, the JSON result has `ok: true`, exit code `1`, and no results. In text mode the CLI shows the preparing message (not the internal preparation ID) and still exits `1`:
 
 ```json
 {
@@ -62,7 +66,7 @@ When automatic preparation has been accepted but is not ready within the observa
 
 ## Errors and exit codes
 
-Ready query results exit `0`. A successful preparing result exits `1`. Failures use `ok: false` with `error: { code, message }` and exit `2`. All paths write exactly one JSON line to stdout. Callers should branch on `data.state` or `error.code`, not parse the message.
+Ready query results exit `0`. A successful preparing result exits `1`. Failures exit `2`. JSON mode writes one envelope line to stdout; after text is selected, successful summaries use stdout and ordinary query failures use stderr. Invalid/conflicting format-selection requests use the framework's JSON fallback. Machine callers should use JSON and branch on `data.state` or `error.code`, not parse the message.
 
 | Code | Meaning |
 | --- | --- |

@@ -17,11 +17,17 @@ export const cliErrorCodes = Object.freeze({
   localizationPracticeNotFound: "localization.practice-not-found",
   queryUnavailable: "query.unavailable",
   queryFailed: "query.failed",
+  outputFormatInvalid: "usage.format-invalid",
+  outputFormatConflict: "usage.format-conflict",
+  outputFormatUnsupported: "usage.format-unsupported",
   usageInvalid: "usage.invalid",
 });
 
 export const frameworkErrorCodes = Object.freeze([
   cliErrorCodes.usageInvalid,
+  cliErrorCodes.outputFormatInvalid,
+  cliErrorCodes.outputFormatConflict,
+  cliErrorCodes.outputFormatUnsupported,
   cliErrorCodes.runtimeUnexpected,
 ]);
 
@@ -39,6 +45,24 @@ export class CliError extends Error {
 
 export function invalidInvocationError(): CliError {
   return new CliError(cliErrorCodes.usageInvalid, "The command invocation is invalid.");
+}
+
+export function invalidOutputFormatError(): CliError {
+  return new CliError(cliErrorCodes.outputFormatInvalid, "The requested output format is invalid.");
+}
+
+export function conflictingOutputFormatsError(): CliError {
+  return new CliError(
+    cliErrorCodes.outputFormatConflict,
+    "The command specifies conflicting output formats.",
+  );
+}
+
+export function unsupportedOutputFormatError(): CliError {
+  return new CliError(
+    cliErrorCodes.outputFormatUnsupported,
+    "The command does not support the requested output format.",
+  );
 }
 
 /** Preserves only errors declared by the selected command's public allowlist. */

@@ -1,6 +1,12 @@
 import { Argument, Command, Option } from "commander";
 
-import { renderSuccess, type OutputWriter } from "./output/protocol.js";
+import {
+  assertJsonValue,
+  renderSuccess,
+  renderTextSuccess,
+  type JsonValue,
+  type OutputWriter,
+} from "./output/protocol.js";
 import {
   commandOptionAppliesTo,
   commandOptionKey,
@@ -13,6 +19,7 @@ import {
   type CommandOption,
   type CommandDefinition,
   type DescribeCommand,
+  type OutputFormat,
   rootCommand,
   snapshotCommandDefinitions,
 } from "./registry.js";
@@ -36,6 +43,7 @@ export function createProgram(
   output: OutputWriter,
   lifecycle: ProgramLifecycle,
   registryDefinitions: readonly CommandDefinition[] = commandRegistry,
+  outputFormat: OutputFormat = "json",
 ): Command {
   const registry = snapshotCommandDefinitions(registryDefinitions);
   const describeFromRegistry: DescribeCommand = (command) => describeCommand(command, registry);
@@ -60,6 +68,7 @@ export function createProgram(
         lifecycle,
         describeFromRegistry,
         discoveryCommandName,
+        outputFormat,
       ),
     );
 
@@ -97,6 +106,7 @@ export function createProgram(
         lifecycle,
         describeFromRegistry,
         definition.name,
+        outputFormat,
       );
     });
   }
@@ -112,6 +122,7 @@ async function executeCommand(
   lifecycle: ProgramLifecycle,
   describeFromRegistry: DescribeCommand,
   responseCommand: string,
+  outputFormat: OutputFormat,
 ): Promise<void> {
   lifecycle.selectCommand(definition);
   const helpOption = enabledFrameworkOption(command, definition, "help");
@@ -123,7 +134,16 @@ async function executeCommand(
   if (versionOption !== undefined) {
     const response = versionOption.response;
     if (response === undefined) throw new Error("The version registry response is missing.");
-    renderSuccess(output, response.command, response.data);
+    renderResponse(
+      output,
+      {
+        command: response.command,
+        data: response.data,
+        ...(response.textRenderer === undefined ? {} : { textRenderer: response.textRenderer }),
+      },
+      outputFormat,
+      `Static response "${response.command}" selected text without a renderer.`,
+    );
     return;
   }
   if (helpOption !== undefined) {
@@ -149,8 +169,48 @@ async function executeCommand(
   if (!definition.exitCodes.includes(exitCode)) {
     throw new Error(`Command "${definition.name}" returned undeclared exit code ${exitCode}.`);
   }
-  renderSuccess(output, responseCommand, result.data);
+  renderResponse(
+    output,
+    {
+      command: responseCommand,
+      data: result.data,
+      ...(definition.textRenderer === undefined ? {} : { textRenderer: definition.textRenderer }),
+      ...(definition.textOutputMode === undefined
+        ? {}
+        : { textOutputMode: definition.textOutputMode }),
+    },
+    outputFormat,
+    `Command "${definition.name}" selected text without a renderer.`,
+  );
   if (exitCode === 1) lifecycle.setExitCode(1);
+}
+
+interface RenderableResponse {
+  readonly command: string;
+  readonly data: JsonValue;
+  readonly textRenderer?: NonNullable<CommandDefinition["textRenderer"]>;
+  readonly textOutputMode?: CommandDefinition["textOutputMode"];
+}
+
+function renderResponse(
+  output: OutputWriter,
+  response: RenderableResponse,
+  format: OutputFormat,
+  missingTextRendererMessage: string,
+): void {
+  assertJsonValue(response.data);
+  if (format === "json") {
+    renderSuccess(output, response.command, response.data);
+    return;
+  }
+  if (response.textRenderer === undefined) {
+    throw new Error(missingTextRendererMessage);
+  }
+  renderTextSuccess(
+    output,
+    response.textRenderer(response.data),
+    response.textOutputMode ?? "line",
+  );
 }
 
 function commandForDefinition(

@@ -5,7 +5,8 @@
 ```sh
 lore pack list
 lore pack list --details
-lore pack list agentic-coding
+lore pack list --format=text
+lore pack list agentic-coding --human
 lore get agentic-coding.testing.classify-failure-before-changing-test
 lore --store-root /path/to/isolated-store pack list
 lore describe pack.list
@@ -69,9 +70,13 @@ data: {
 
 Practice entries are sorted by exact `id`. The returned `id` can be passed directly to `lore get`. Full Practice bodies, anti-patterns, and source details remain part of `get`. An installed Pack with zero Practices is successful and returns an empty `practices` array.
 
+## Output format
+
+JSON remains the default and preserves the structured result shapes documented above. Use `--format=text` or its `--human` alias for a readable catalog view. Every text mode starts with the Store snapshot. The installed-Pack view shows names and versions (and practice counts for the normal catalog); `--details` shows descriptions and applicability; `pack list <pack>` shows stable Practice IDs, titles, and applicability conditions. Empty Stores and empty Pack catalogs receive explicit messages rather than blank output.
+
 ## Errors and boundaries
 
-Success exits `0`. Failures use `ok: false` with `error: { code, message }` and exit `2`. Both success and failure write exactly one JSON line to stdout.
+Success exits `0`; failures exit `2`. In the default/JSON format, success and failure write one JSON line to stdout. Once text is selected, successful catalogs go to stdout and ordinary list errors go to stderr. Format-selection errors use the framework's JSON fallback.
 
 | Code | Meaning |
 | --- | --- |
