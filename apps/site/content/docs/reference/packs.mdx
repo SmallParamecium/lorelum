@@ -9,6 +9,8 @@ description: Install, browse, update, remove, and validate Packs.
 lore pack install agentic-coding
 ```
 
+`pack install` uses text output by default. Pass `--json` when a machine-readable envelope is required. `pack update`, `pack remove`, and `validate` remain JSON-only for now.
+
 Global `--store-root <path>` selects the LocalStore and `--log-level <level>` controls stderr logs. `--registry <owner/repository>` is specific to install and update.
 
 A version pins the release. Omitting it selects the Registry's latest release. For a different Registry, pass `--registry owner/repository`.

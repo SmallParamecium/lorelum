@@ -6,7 +6,7 @@ description: Read one current Practice by its exact ID.
 Read a complete Practice from the current query context. The command is local and does not need the Backend, model, or network. A discovered ProjectContext returns its current local winner; `--no-project` uses only the selected Store.
 
 ```sh
-lore get <practice-id> [--store-root <path>] [--project-root <path>] [--no-project]
+lore get <practice-id> [--json] [--store-root <path>] [--project-root <path>] [--no-project]
 ```
 
 Use the exact `id` returned by [`query`](./query) or `lore pack list <pack>`; titles, prefixes, and filenames are not accepted.
@@ -14,6 +14,8 @@ Use the exact `id` returned by [`query`](./query) or `lore pack list <pack>`; ti
 ```sh
 lore get example.practice-id
 ```
+
+Text is the default for `get` and writes only the complete Practice body. Pass `--json` when a machine-readable envelope is required; JSON mode writes the structured result described below to stdout.
 
 Success data contains `practice` (the full Practice and metadata), `contentDigest`, and `sources` (`packName`, `sourcePath`, and `packRoot`). For a Store source, `sourcePath` is relative to its readable `packRoot` current view, so a separate `practicePath` is unnecessary; that root can resolve a Practice link such as `resource:references/api-compatibility.md`. For a ProjectContext source, `packRoot` is safe logical provenance such as `project-layer-0`, not an absolute filesystem path or resource locator.
 

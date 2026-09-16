@@ -6,7 +6,7 @@ description: Find the right current Practices for an AI coding task and moment.
 `query` searches the current query context and returns ranked Practice summaries. Semantic relevance is the default; keyword mode is an explicit offline path. When the current directory or an ancestor has `.lorelum/`, its layers are inherited and merged from parent to child. Use `--no-project` to use only the selected Store.
 
 ```sh
-lore query <text> [--mode semantic|keyword] [--top-k <n>] [--store-root <path>] [--project-root <path>] [--no-project] [--cache-root <path>]
+lore query <text> [--mode semantic|keyword] [--top-k <n>] [--store-root <path>] [--project-root <path>] [--no-project] [--cache-root <path>] [--json]
 ```
 
 `text` is required, must be non-empty after trimming, and is limited to 4,096 Unicode code points. `--top-k` accepts an integer from 1 to 50 and defaults to 5. `--mode` is `semantic` (default) or `keyword`. `--store-root` selects Store base data; `--project-root` selects a directory directly containing `.lorelum/`; `--cache-root` selects user-level derived cache and never writes into the project. `--max-wait-ms` and `--min-coverage-percent` override the user-level wait and partial-result policy; `--require-complete` accepts only complete semantic results.
@@ -17,7 +17,11 @@ lore query "authorization boundary" --top-k 10
 lore query "token session cookie" --mode keyword
 ```
 
+Text is the default for `query` and prints ordered Practice summaries. Pass `--json` for the machine-readable protocol envelope; JSON mode is recommended for scripts and Agents that need to inspect `data`, `state`, or `error.code`.
+
 The first semantic query submits or joins the background index operation for the current corpus; it does not require a preliminary `lore index build`. Successful data has `mode` and `results`. Each result includes `practiceId`, `title`, `stage`, `techStack`, `appliesWhen`, `severity`, and `contentDigest`; pass that `practiceId` to [`get`](./get). Semantic results also include `profileId` and `coverage`: `complete` means a complete artifact matches every current Practice; `partial` searches only verified current progress rows and includes `indexedPracticeCount`, `totalPracticeCount`, and `operationId`. Changed, removed, shadowed, or ignored Practices never leak from an old artifact.
+
+If the semantic model is still preparing, text mode prints the preparing message and preserves exit code `1`; JSON mode returns the structured `preparing` data. If verified current progress has not reached the requested coverage, text mode prints the indexing message and preserves exit code `1`; JSON mode returns the structured `indexing` data.
 
 If the semantic model is still preparing, data is `{ "state": "preparing", "preparationId": "...", "message": "..." }` and the process exits `1`; check `lore model status`, wait with `lore model load`, then retry. If verified current progress has not reached the requested coverage, data is `{ "state": "indexing", "operationId": "...", "indexedPracticeCount": 50, "totalPracticeCount": 100 }` and also exits `1`. A wait timeout does not cancel the operation.
 
