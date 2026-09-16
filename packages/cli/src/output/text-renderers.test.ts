@@ -46,7 +46,7 @@ test("query text preserves relevance order and task-relevant fields, not machine
   expect(text).not.toContain("contentDigest");
 });
 
-test("query text handles empty, keyword, and preparing results explicitly", () => {
+test("query text handles empty, keyword, preparing, and indexing results explicitly", () => {
   expect(renderQueryText({ mode: "keyword", results: [] })).toBe(
     "Query mode: keyword\nNo matching Practices.",
   );
@@ -59,6 +59,18 @@ test("query text handles empty, keyword, and preparing results explicitly", () =
   expect(preparing).toContain("preparing");
   expect(preparing).toContain(message);
   expect(preparing).not.toContain("private-operation-id");
+
+  const indexing = renderQueryText({
+    state: "indexing",
+    operationId: "private-index-operation-id",
+    indexedPracticeCount: 50,
+    totalPracticeCount: 100,
+    message: "The semantic index is building in the background.",
+  });
+  expect(indexing).toContain("Semantic query is indexing.");
+  expect(indexing).toContain("Indexed Practices: 50/100");
+  expect(indexing).toContain("The semantic index is building in the background.");
+  expect(indexing).not.toContain("private-index-operation-id");
 });
 
 test("pack list text keeps Store snapshot, stable IDs, order, and empty state", () => {

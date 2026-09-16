@@ -464,6 +464,31 @@ test("renders empty and preparing semantic query text while preserving exit code
   expect(preparing.stdout).toContain("The local model is preparing in the background.");
   expect(preparing.stdout).not.toContain("1f8fad5b-d9cb-469f-a165-70867728950e");
   expect(preparing.stderr).toBe("");
+
+  const indexingClient = {
+    async query() {
+      return {
+        state: "indexing" as const,
+        operationId: "0f8fad5b-d9cb-469f-a165-70867728950e",
+        indexedPracticeCount: 50,
+        totalPracticeCount: 100,
+      };
+    },
+  } satisfies SemanticRuntimeClient;
+  const indexing = await invokeText(
+    ["query", "auth", "--require-complete"],
+    {
+      async query() {
+        return queryResult;
+      },
+    },
+    async () => indexingClient,
+  );
+  expect(indexing.exitCode).toBe(1);
+  expect(indexing.stdout).toContain("Semantic query is indexing.");
+  expect(indexing.stdout).toContain("Indexed Practices: 50/100");
+  expect(indexing.stdout).not.toContain("0f8fad5b-d9cb-469f-a165-70867728950e");
+  expect(indexing.stderr).toBe("");
 });
 
 test("publishes query arguments, schema, error allowlist, and exit codes through discovery", () => {

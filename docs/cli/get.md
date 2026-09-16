@@ -8,8 +8,6 @@
 lore pack list
 lore pack list agentic-coding
 lore get agentic-coding.testing.classify-failure-before-changing-test
-lore get agentic-coding.testing.classify-failure-before-changing-test
-lore get agentic-coding.testing.classify-failure-before-changing-test
 lore --store-root /path/to/isolated-store get agentic-coding.testing.classify-failure-before-changing-test
 lore get platform.testing --project-root /path/to/project
 lore get platform.testing --no-project

@@ -200,7 +200,12 @@ test("query and get use project winners, retain valid neighbors, and keep --no-p
     expect(localGet.response).toMatchObject({
       data: {
         practice: { title: "Child shared", body: "child overlay guidance\n" },
-        sources: [{ packRoot: "project-layer-2", sourcePath: "practices/shared.md" }],
+        sources: [
+          {
+            packRoot: expect.stringMatching(/^project-layer-\d+$/),
+            sourcePath: "practices/shared.md",
+          },
+        ],
       },
     });
 

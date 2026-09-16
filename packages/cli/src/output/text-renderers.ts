@@ -178,6 +178,15 @@ export const renderQueryText: TextRenderer = (data) => {
   if (result.state === "preparing") {
     return `Semantic query is preparing.\n${string(result.message, "message")}`;
   }
+  if (result.state === "indexing") {
+    const indexed = integer(result.indexedPracticeCount, "indexedPracticeCount");
+    const total = integer(result.totalPracticeCount, "totalPracticeCount");
+    return [
+      "Semantic query is indexing.",
+      string(result.message, "message"),
+      `Indexed Practices: ${indexed}/${total}`,
+    ].join("\n");
+  }
 
   const mode = string(result.mode, "mode");
   if (mode !== "semantic" && mode !== "keyword") {
